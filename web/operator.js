@@ -261,6 +261,7 @@
     roster.innerHTML =
       '<div class="op-roster-head">' +
         '<input class="op-roster-search" id="opRosterSearch" placeholder="Filter agents…" />' +
+        '<button class="op-roster-new" id="opResume" title="Reopen a closed session">' + I.resume + "</button>" +
         '<button class="op-roster-new" id="opNewAgent" title="New agent (n)">' + I.plus + "</button>" +
       "</div>" +
       '<div class="op-roster-list" id="opRosterList"></div>';
@@ -271,6 +272,7 @@
       var s = $("opRosterSearch");
       if (s) { s.value = rosterFilter; s.addEventListener("input", function () { rosterFilter = s.value.toLowerCase(); renderRoster(); }); }
       $("opNewAgent") && $("opNewAgent").addEventListener("click", newAgent);
+      $("opResume") && $("opResume").addEventListener("click", function () { openPalette(true); });
     }, 0);
     return root;
   }
@@ -913,8 +915,14 @@
   }
 
   // ---- command palette -----------------------------------------------------
-  var paletteOpen = false, palQuery = "", palItems = [], palIdx = 0;
-  function openPalette() { paletteOpen = true; $("opPalette").hidden = false; palQuery = ""; palIdx = 0; var i = $("palInput"); i.value = ""; i.focus(); fetchHistory(); renderPaletteList(); }
+  var paletteOpen = false, palQuery = "", palItems = [], palIdx = 0, palResumeOnly = false;
+  function openPalette(resumeOnly) {
+    paletteOpen = true; palResumeOnly = !!resumeOnly;
+    $("opPalette").hidden = false; palQuery = ""; palIdx = 0;
+    var i = $("palInput"); i.value = "";
+    i.placeholder = resumeOnly ? "Search closed sessions to reopen…" : "Type to search agents or run a command…";
+    i.focus(); fetchHistory(); renderPaletteList();
+  }
   function closePalette() { paletteOpen = false; $("opPalette").hidden = true; }
   function paletteCommands() {
     return [
@@ -939,9 +947,14 @@
     var aliveIds = {}; sessions().forEach(function (s) { aliveIds[s.sessionId] = true; });
     var resumes = closedSessions.filter(function (s) { return !aliveIds[s.sessionId]; }).slice(0, 20).map(function (s) {
       var when = s.updatedAt ? ago(s.updatedAt, now()) + " ago" : "";
-      return { g: "Resume closed session", title: s.title || s.project || "session", sub: (s.project || "") + (when ? " · " + when : ""), run: function () { resumeSession(s.sessionId, s.title || s.project); }, _s: ((s.title || "") + " " + (s.project || "") + " " + (s.cwd || "")).toLowerCase() };
+      return { g: "Resume closed session", title: s.title || s.project || "session", sub: (s.project || "") + (when ? " · " + when : ""), run: function () { resumeSession(s.sessionId, s.title || s.project); }, _s: ((s.title || "") + " " + (s.project || "") + " " + (s.cwd || "") + " resume reopen closed session").toLowerCase() };
     });
-    var all = cmds.concat(agents).concat(resumes).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
+    var all;
+    if (palResumeOnly && !q) {
+      all = resumes; // opened via the Resume button — show only closed sessions
+    } else {
+      all = cmds.concat(agents).concat(resumes).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
+    }
     palItems = all; if (palIdx >= all.length) palIdx = Math.max(0, all.length - 1);
     var list = $("palList"), html = "", lastG = null;
     all.forEach(function (it, i) {
@@ -951,7 +964,8 @@
         '<span class="pi-main"><span class="pi-title">' + esc(it.title) + '</span>' + (it.sub ? '<span class="pi-sub">' + esc(it.sub) + "</span>" : "") + "</span>" +
         (it.key ? '<span class="pi-key">' + esc(it.key) + "</span>" : "") + "</div>";
     });
-    list.innerHTML = html || '<div class="op-empty" style="padding:30px">No matches</div>';
+    var emptyMsg = palResumeOnly ? (closedSessions.length ? "No closed sessions match" : "No closed sessions to reopen yet") : "No matches";
+    list.innerHTML = html || '<div class="op-empty" style="padding:30px">' + emptyMsg + "</div>";
     list.querySelectorAll(".pal-item").forEach(function (n) { n.addEventListener("click", function () { runPalette(parseInt(n.dataset.i, 10)); }); });
   }
   function runPalette(i) { var it = palItems[i]; if (!it) return; closePalette(); it.run(); }
@@ -999,7 +1013,7 @@
     applyTheme(currentTheme());
     $("opTheme") && $("opTheme").addEventListener("click", function () { applyTheme(currentTheme() === "light" ? "dark" : "light"); });
     $("opCmd") && $("opCmd").addEventListener("click", openPalette);
-    $("palInput") && $("palInput").addEventListener("input", function (e) { palQuery = e.target.value; palIdx = 0; renderPaletteList(); });
+    $("palInput") && $("palInput").addEventListener("input", function (e) { palQuery = e.target.value; if (palQuery) palResumeOnly = false; palIdx = 0; renderPaletteList(); });
     $("opPalette") && $("opPalette").addEventListener("click", function (e) { if (e.target === $("opPalette")) closePalette(); });
     fetchRepos();
     setView(activeView);
