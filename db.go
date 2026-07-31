@@ -63,6 +63,9 @@ func initDB() error {
 	)`); err != nil {
 		return err
 	}
+	if _, err := d.Exec(reviewCommentsSchema); err != nil {
+		return err
+	}
 	db = d
 	return nil
 }

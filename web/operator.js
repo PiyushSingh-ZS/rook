@@ -572,6 +572,62 @@
     window.rookCharts.traceTimeline($("wsTraceChart"), { spans: spans });
   }
 
+  // ---- review comment threads (persisted, routed to the agent, stateful) ----
+  function loadReviewThreads(sid, container) {
+    if (!container) return;
+    fetch("/api/review/comments?sessionId=" + encodeURIComponent(sid), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (j) { if (j && j.data) j = j.data; renderReviewThreads(container, sid, j || []); })
+      .catch(function () {});
+  }
+  function postJSON(url, body) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: (j && j.data) || j }; }); });
+  }
+  function renderReviewThreads(container, sid, comments) {
+    if (!container) return;
+    if (!comments.length) { container.innerHTML = ""; return; }
+    var open = comments.filter(function (c) { return c.state === "open"; }).length;
+    container.innerHTML =
+      '<div class="ws-th-head"><span class="ws-th-title">Review threads <b>' + comments.length + "</b></span>" +
+      (open ? '<button class="btn sm" id="wsThSendAll">Send ' + open + " open to agent</button>" : "") + "</div>" +
+      '<div class="ws-th-list">' + comments.map(function (c) {
+        return '<div class="ws-th-item ' + c.state + '" data-id="' + c.id + '">' +
+          '<div class="ws-th-loc mono">' + esc(c.file || "") + (c.line ? ":" + c.line : "") + "</div>" +
+          '<div class="ws-th-text">' + esc(c.text) + "</div>" +
+          '<div class="ws-th-actions"><span class="ws-th-state ' + c.state + '">' + c.state + "</span>" +
+            (c.state === "open" ? '<button class="btn xs" data-act="send">Send</button>' : "") +
+            (c.state === "addressed" ? '<button class="btn xs" data-act="reopen">Reopen</button>' : '<button class="btn xs" data-act="addressed">Mark done</button>') +
+            '<button class="btn xs danger" data-act="del" title="Delete">×</button>' +
+          "</div></div>";
+      }).join("") + "</div>";
+    var sendAll = container.querySelector("#wsThSendAll");
+    if (sendAll) sendAll.addEventListener("click", function () {
+      postJSON("/api/review/comment/send", { sessionId: sid }).then(function (res) {
+        if (!res.ok) throw new Error(resumeErr(res.j) || "send failed");
+        toast("Sent " + (res.j.sent || "") + " to agent", "ok"); loadReviewThreads(sid, container);
+      }).catch(function (e) { toast(e.message || "send failed", "err"); });
+    });
+    container.querySelectorAll(".ws-th-item").forEach(function (row) {
+      var id = parseInt(row.dataset.id, 10);
+      row.querySelectorAll("[data-act]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var act = b.dataset.act;
+          if (act === "del") { fetch("/api/review/comment?id=" + id, { method: "DELETE" }).then(function () { loadReviewThreads(sid, container); }); return; }
+          if (act === "send") {
+            postJSON("/api/review/comment/send", { id: id }).then(function (res) {
+              if (!res.ok) throw new Error(resumeErr(res.j) || "send failed");
+              toast("Sent to agent", "ok"); loadReviewThreads(sid, container);
+            }).catch(function (e) { toast(e.message || "send failed", "err"); });
+            return;
+          }
+          postJSON("/api/review/comment/state", { id: id, state: act === "reopen" ? "open" : "addressed" })
+            .then(function () { loadReviewThreads(sid, container); });
+        });
+      });
+    });
+  }
+
   async function loadDiff() {
     var p = $("wsDiff"); if (!p) return;
     var s = findAgent(selectedId); if (!s || !s.cwd) { p.innerHTML = '<div class="op-empty">' + I.diff + '<div class="t">No working directory</div></div>'; return; }
@@ -582,14 +638,24 @@
       var d = await (await fetch("/api/diff?path=" + encodeURIComponent(s.cwd), { cache: "no-store" })).json();
       if (d.data) d = d.data;
       p.innerHTML = "";
+      var threads = el("div", "ws-threads"); threads.id = "wsThreads"; p.appendChild(threads);
       var mount = el("div"); p.appendChild(mount);
       if (window.renderDiffV2) {
         window.renderDiffV2(mount, d, { onSend: function (comments) {
           if (!comments || !comments.length) return;
-          var msg = "Review comments:\n" + comments.map(function (c) { return "• " + (c.file || "") + ":" + (c.line || "?") + " — " + c.text; }).join("\n");
-          respond(s.sessionId, "text", msg); toast(comments.length + " comment(s) sent", "ok");
+          var sid = s.sessionId;
+          // persist each inline comment as an open thread, then route all open ones
+          Promise.all(comments.map(function (c) {
+            return fetch("/api/review/comment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sid, file: c.file || "", line: c.line || 0, side: c.side || "", text: c.text }) });
+          })).then(function () {
+            return postJSON("/api/review/comment/send", { sessionId: sid });
+          }).then(function (res) {
+            toast(((res.j && res.j.sent) || comments.length) + " comment(s) sent to agent", "ok");
+            loadReviewThreads(sid, $("wsThreads"));
+          }).catch(function () { toast("Couldn't send comments", "err"); loadReviewThreads(sid, $("wsThreads")); });
         } });
-      } else { p.innerHTML = "<pre style='padding:16px;white-space:pre-wrap'>" + esc(d.patch || "") + "</pre>"; }
+      } else { p.innerHTML = "<pre style='padding:16px;white-space:pre-wrap'>" + esc(d.patch || "") + "</pre>"; return; }
+      loadReviewThreads(s.sessionId, threads); // hydrate persisted threads (survive reload/restart)
     } catch (e) { p.innerHTML = '<div class="op-empty">' + I.alert + '<div class="t">Couldn\'t load diff</div></div>'; }
   }
 
