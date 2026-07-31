@@ -489,9 +489,20 @@
   }
   function stat(k, v, wrap) { return '<div class="ov-stat"><div class="k">' + k + '</div><div class="v' + (wrap ? " wrap" : "") + '">' + v + "</div></div>"; }
   // Claude's context window is ~200k by default, or ~1M with the long-context
-  // beta. rook can't read the setting, but a turn that already read >200k tokens
-  // is unambiguously on the 1M window — so pick the smallest window that fits.
-  function ctxLimit(model, used) { return (used || 0) > 200000 ? 1000000 : 200000; }
+  // beta. rook can't read the setting, so it infers the window as a per-MODEL
+  // property: if ANY session on a model has read >200k tokens, that model is on
+  // the 1M window here, so every session on it uses 1M — even ones currently
+  // well under 200k. Without this, a 1M agent sitting at 179k gets mislabelled a
+  // 200k agent at "90% full". Scanning one session in isolation can't tell the
+  // difference; scanning all sessions on the model can.
+  function windowForModel(model) {
+    var max = 0, m = model || "";
+    sessions().forEach(function (s) { if ((s.model || "") === m) max = Math.max(max, s.contextTokens || 0); });
+    return max > 200000 ? 1000000 : 200000;
+  }
+  function ctxLimit(model, used) {
+    return Math.max(windowForModel(model), (used || 0) > 200000 ? 1000000 : 200000);
+  }
 
   function renderFiles() {
     var p = $("wsFiles"); if (!p || p.dataset.done === selectedId) { if (p) p.dataset.done = selectedId; }
