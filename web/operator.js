@@ -96,6 +96,20 @@
   var rosterFilter = "";
   var ws = { id: null, tab: "overview", term: null, diffLoaded: false, traceLoaded: false };
 
+  // after a spawn we don't have the new session's id yet (it appears once the
+  // agent starts writing), so remember what to select and grab it on a later poll.
+  var pendingSpawn = null; // { cwd, worktree, since }
+  function trySelectSpawned() {
+    if (!pendingSpawn) return;
+    if (now() - pendingSpawn.since > 30000) { pendingSpawn = null; return; } // give up after 30s
+    var recent = sessions().filter(function (s) { return (s.startedAt || 0) >= pendingSpawn.since - 8000; });
+    var m = recent.filter(function (s) {
+      return (pendingSpawn.worktree && s.cwd === pendingSpawn.worktree) || s.cwd === pendingSpawn.cwd;
+    }).sort(function (a, b) { return (b.startedAt || 0) - (a.startedAt || 0); })[0]
+      || recent.sort(function (a, b) { return (b.startedAt || 0) - (a.startedAt || 0); })[0]; // fallback: any brand-new session
+    if (m) { pendingSpawn = null; selectAgent(m.sessionId); toast("Opened " + (m.title || m.project || "the new agent"), "ok"); }
+  }
+
   // discovered local repos ({path,name,branch,remote}) — lets us auto-resolve a
   // working directory instead of making the user type it.
   var repoList = [];
@@ -135,6 +149,7 @@
       var first = pickDefault(); if (first) selectedId = first.sessionId;
     }
     if (activeView === "operator") {
+      trySelectSpawned(); // grab a just-launched agent as soon as it appears
       renderRoster();
       if (ws.id !== selectedId) buildWorkspace();
       else if (ws.tab === "overview") renderOverview(); // live-refresh overview only
@@ -783,8 +798,17 @@
           if (!name) name = (cwd.replace(/\/+$/, "").split("/").pop() || "agent") + "-" + Date.now().toString(36).slice(-4);
           name = name.replace(/[^A-Za-z0-9._-]+/g, "-");
           var body = { name: name, cwd: cwd, agent: $("sp_agent").value, prompt: $("sp_prompt").value, worktree: $("sp_wt").checked };
-          try { var r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); var d = await r.json(); if (d.data) d = d.data; if (!r.ok) { toast(d.error || d.message || "Launch failed", "err"); return; } toast("Agent launched", "ok"); close(); setTimeout(poll, 400); }
-          catch (e) { toast("Launch failed", "err"); }
+          try {
+            var r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+            var d = await r.json(); if (d.data) d = d.data;
+            if (!r.ok) { toast(d.error || d.message || "Launch failed", "err"); return; }
+            toast("Agent launched — opening its session…", "ok");
+            close();
+            // jump to the new agent's session (selected once it appears in state)
+            pendingSpawn = { cwd: body.cwd, worktree: d.worktree || "", since: now() };
+            setView("operator");
+            setTimeout(poll, 400);
+          } catch (e) { toast("Launch failed", "err"); }
         });
       });
   }

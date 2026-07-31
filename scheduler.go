@@ -3,9 +3,17 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"gofr.dev/pkg/gofr"
 )
+
+// summaryOrigin is the base URL the summary agent calls back on; set when the
+// scheduler starts so the manual trigger can reuse it.
+var summaryOrigin string
 
 // buildSummaryPrompt is the Go-side twin of the frontend's buildSummaryPrompt,
 // used by the scheduled auto-run. Keep the two in sync.
@@ -14,6 +22,7 @@ func buildSummaryPrompt(start, end, author, repos, origin string) string {
 		origin, start, end, author, repos)
 	lines := []string{
 		fmt.Sprintf("Produce my work summary for %s to %s (inclusive dates). GitHub author: %s. Repos: %s.", start, end, author, repos),
+		"Cover EVERYTHING that happened in the window regardless of working directory: all local AI-agent (Claude Code) work across every project/directory, AND all GitHub contributions (commits, PRs, issues, reviews) by the author. Do not scope to a single repo or folder.",
 		"Follow this flow:",
 		fmt.Sprintf("1) GitHub authored artifacts: gh search prs --author=%s --created=\"%s..%s\" --json repository,number,title,state,createdAt,url --limit 50 ; and gh search issues (same filters). For each repo, list ALL commits via the commit SEARCH API (search/commits, q=author:%s+repo:<repo>+committer-date:%s..%s) — critical because the plain repo commits endpoint misses squash-merged/deleted branches.", author, start, end, author, start, end),
 		fmt.Sprintf("2) Reviews with timestamps via GraphQL search (repo:<repo> reviewed-by:%s updated:%s..%s is:pr), reading each review's submittedAt to place it on the correct day.", author, start, end),
@@ -31,6 +40,7 @@ func buildSummaryPrompt(start, end, author, repos, origin string) string {
 
 // startSummaryScheduler triggers a daily summary at the configured local time.
 func startSummaryScheduler(origin string) {
+	summaryOrigin = origin
 	go func() {
 		lastRun := ""
 		for {
@@ -59,13 +69,73 @@ func runScheduledSummary(c Config, origin, date string) {
 		return
 	}
 	name := "summary-auto-" + strings.ReplaceAll(date, "-", "")
-	// kill any leftover session with this name so new-session doesn't collide
-	_, _ = runTmux("kill-session", "-t", name)
-	prompt := buildSummaryPrompt(date, date, c.SummaryAuthor, c.SummaryRepos, origin)
-	_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: c.SummaryCwd, Agent: "claude", Prompt: prompt})
-	if err != nil {
+	if _, err := spawnSummary(c, origin, date, date, c.SummaryAuthor, c.SummaryRepos, c.SummaryCwd, name); err != nil {
 		log.Printf("scheduled summary failed: %v", err)
 		return
 	}
 	log.Printf("scheduled summary spawned for %s", date)
+}
+
+// spawnSummary launches a Claude agent that assembles a work summary for the
+// window and POSTs it back to /api/summary. Shared by the scheduler and the
+// manual "Generate summary" trigger.
+func spawnSummary(c Config, origin, start, end, author, repos, cwd, name string) (string, error) {
+	if cwd == "" {
+		return "", fmt.Errorf("no working directory available to run the summary agent")
+	}
+	// kill any leftover session with this name so new-session doesn't collide
+	_, _ = runTmux("kill-session", "-t", name)
+	prompt := buildSummaryPrompt(start, end, author, repos, origin)
+	_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: cwd, Agent: "claude", Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// defaultSummaryCwd picks a directory to run the summary agent in when none is
+// configured — the summary is cwd-agnostic (it pulls all agents' work and all
+// GitHub contributions regardless of directory), so any real repo will do.
+func defaultSummaryCwd() string {
+	if rs := discoverRepos(); len(rs) > 0 {
+		return rs[0].Path
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}
+
+type summaryGenReq struct {
+	Date   string `json:"date"`
+	Author string `json:"author"`
+	Repos  string `json:"repos"`
+	Cwd    string `json:"cwd"`
+}
+
+// handleSummaryGenerate is the manual trigger for a work summary. It defaults
+// the date to today, the author/repos from config, and the working directory to
+// any local repo — the summary covers every agent's work and all GitHub
+// contributions for the day regardless of where they happened.
+func handleSummaryGenerate(ctx *gofr.Context) (any, error) {
+	if tmuxBin == "" {
+		return nil, errf(http.StatusServiceUnavailable, "tmux is required to run the summary agent — install tmux and retry")
+	}
+	var req summaryGenReq
+	_ = ctx.Bind(&req)
+	c := loadConfig()
+	author := firstNonEmpty(req.Author, c.SummaryAuthor)
+	if author == "" {
+		return nil, errf(http.StatusBadRequest, "a GitHub author is required — set one in Settings or pass 'author'")
+	}
+	repos := firstNonEmpty(req.Repos, c.SummaryRepos)
+	date := strings.TrimSpace(req.Date)
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+	cwd := firstNonEmpty(req.Cwd, c.SummaryCwd, defaultSummaryCwd())
+	name := "summary-" + strings.ReplaceAll(date, "-", "") + "-" + fmt.Sprint(time.Now().Unix()%100000)
+	session, err := spawnSummary(c, summaryOrigin, date, date, author, repos, cwd, name)
+	if err != nil {
+		return nil, errf(http.StatusBadGateway, "%v", err)
+	}
+	return rawJSON(map[string]any{"ok": true, "session": session, "date": date, "author": author})
 }

@@ -173,6 +173,23 @@
       ".op-sum-search input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--ink); font-size: 12.5px; font-family: var(--sans); }" +
       ".op-sum-search input::placeholder { color: var(--ink-4); }" +
       ".op-sum-bar .btn.on { color: var(--coral); border-color: var(--coral-line); background: var(--coral-soft); }" +
+      ".op-sum-bar .btn.gen { color: var(--coral); border-color: var(--coral-line); }" +
+      ".op-sum-bar .btn.gen:hover { background: var(--coral-soft); }" +
+      ".op-sum-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); padding: 24px; }" +
+      ".op-sum-modal-box { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg, 14px); box-shadow: var(--shadow-lg, 0 24px 60px rgba(0,0,0,.4)); padding: 20px 20px 16px; display: flex; flex-direction: column; gap: 12px; }" +
+      ".op-sum-modal-h { font-size: 15px; font-weight: 600; color: var(--ink); }" +
+      ".op-sum-modal-sub { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin-top: -6px; }" +
+      ".op-sum-fld { display: flex; flex-direction: column; gap: 5px; }" +
+      ".op-sum-fld > span { font-size: 11px; color: var(--ink-3); font-weight: 500; letter-spacing: .02em; }" +
+      ".op-sum-fld > span em { color: var(--ink-4); font-style: normal; font-weight: 400; }" +
+      ".op-sum-fld input { height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 13px; font-family: var(--sans); outline: none; }" +
+      ".op-sum-fld input:focus { border-color: var(--coral-line); }" +
+      ".op-sum-modal-note { font-size: 11px; color: var(--ink-4); line-height: 1.5; }" +
+      ".op-sum-modal-note.err { color: var(--danger); }" +
+      ".op-sum-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }" +
+      ".op-sum-modal-actions .btn.gen { color: #fff; background: var(--coral); border-color: var(--coral); }" +
+      ".op-sum-modal-actions .btn.gen:hover { filter: brightness(1.05); }" +
+      ".op-sum-modal-actions .btn.gen:disabled { opacity: .6; cursor: default; }" +
       ".op-sum-bulk { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--coral-line); background: var(--coral-soft); border-radius: var(--radius); }" +
       ".op-sum-bulk .n { font-size: 12px; color: var(--ink); font-weight: 500; margin-right: auto; }" +
       ".op-sum-list { display: flex; flex-direction: column; }" +
@@ -253,7 +270,11 @@
       ctx.toast("Refreshed", "");
     });
 
-    bar.appendChild(search); bar.appendChild(selBtn); bar.appendChild(refBtn);
+    var genBtn = ctx.el("button", "btn sm gen", "Generate");
+    genBtn.title = "Generate a work summary for a day (all agents + GitHub, any directory)";
+    genBtn.addEventListener("click", function () { openGenModal(ctx); });
+
+    bar.appendChild(search); bar.appendChild(genBtn); bar.appendChild(selBtn); bar.appendChild(refBtn);
 
     var bulk = ctx.el("div", "op-sum-bulk");
     bulk.style.display = "none";
@@ -329,7 +350,7 @@
       var msg = data.length ? "No summaries match “" + esc(filter) + "”"
         : "No summaries yet";
       var hint = data.length ? "Clear the filter to see all."
-        : "Generate one from the classic view or command palette.";
+        : "Hit Generate above to build one for any day.";
       refs.list.innerHTML =
         "<div class='op-empty'>" + ctx.icon.file +
         "<div class='t'>" + msg + "</div><div class='h'>" + hint + "</div></div>";
@@ -453,6 +474,91 @@
       ctx.toast("Deleted " + ok + " summar" + (ok === 1 ? "y" : "ies"), ok < ids.length ? "err" : "ok");
       fetchList(ctx, true);
       paint(ctx);
+    });
+  }
+
+  // ---- generate modal ------------------------------------------------------
+  function errMsg(j) {
+    if (!j) return "";
+    if (typeof j.error === "string") return j.error;
+    if (j.error && j.error.message) return j.error.message;
+    return j.message || "";
+  }
+
+  function openGenModal(ctx) {
+    var existing = document.querySelector(".op-sum-modal");
+    if (existing) existing.remove();
+    var overlay = document.createElement("div");
+    overlay.className = "op-sum-modal";
+    var today = ctx.now ? new Date(ctx.now()).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    overlay.innerHTML =
+      "<div class='op-sum-modal-box'>" +
+        "<div class='op-sum-modal-h'>Generate work summary</div>" +
+        "<div class='op-sum-modal-sub'>Covers every agent's work and all your GitHub contributions for the day — regardless of working directory.</div>" +
+        "<label class='op-sum-fld'><span>Day</span><input id='genDate' type='date' value='" + today + "'></label>" +
+        "<label class='op-sum-fld'><span>GitHub author</span><input id='genAuthor' type='text' placeholder='your-github-username' autocomplete='off' spellcheck='false'></label>" +
+        "<label class='op-sum-fld'><span>Repos <em>(optional, comma-separated)</em></span><input id='genRepos' type='text' placeholder='owner/repo, owner/repo2' autocomplete='off' spellcheck='false'></label>" +
+        "<div class='op-sum-modal-note' id='genNote'>An agent spawns in a local repo, gathers the day's work, and saves the summary here when done.</div>" +
+        "<div class='op-sum-modal-actions'>" +
+          "<button class='btn sm' id='genCancel'>Cancel</button>" +
+          "<button class='btn sm gen' id='genGo'>Generate</button>" +
+        "</div>" +
+      "</div>";
+    document.body.appendChild(overlay);
+    var dateEl = overlay.querySelector("#genDate");
+    var authEl = overlay.querySelector("#genAuthor");
+    var repoEl = overlay.querySelector("#genRepos");
+    var note = overlay.querySelector("#genNote");
+    var goBtn = overlay.querySelector("#genGo");
+
+    // prefill author + repos from saved config
+    fetch("/api/config", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        var c = unwrap(r) || {};
+        if (!authEl.value) authEl.value = c.summaryAuthor || "";
+        if (!repoEl.value) repoEl.value = c.summaryRepos || "";
+      })
+      .catch(function () {});
+
+    var close = function () {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    var onKey = function (e) { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+    overlay.querySelector("#genCancel").addEventListener("click", close);
+    setTimeout(function () { authEl.focus(); }, 30);
+
+    goBtn.addEventListener("click", function () {
+      var author = authEl.value.trim();
+      if (!author) {
+        note.textContent = "Enter a GitHub author to attribute the work to.";
+        note.className = "op-sum-modal-note err";
+        authEl.focus();
+        return;
+      }
+      goBtn.disabled = true;
+      goBtn.textContent = "Starting…";
+      fetch("/api/summary/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: dateEl.value, author: author, repos: repoEl.value.trim() })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: unwrap(j) }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(errMsg(res.j) || "couldn't start the summary agent");
+          close();
+          ctx.toast("Summary agent started for " + (res.j.date || dateEl.value) + " — it'll appear here when done", "ok");
+        })
+        .catch(function (e) {
+          note.textContent = (e && e.message) || "Failed to start the summary agent.";
+          note.className = "op-sum-modal-note err";
+          goBtn.disabled = false;
+          goBtn.textContent = "Generate";
+        });
     });
   }
 

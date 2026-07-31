@@ -106,6 +106,7 @@ func main() {
 	app.GET("/api/summary", handleSummaryGet)
 	app.DELETE("/api/summary", handleSummaryDelete)
 	app.GET("/api/summaries", handleSummaries)
+	app.POST("/api/summary/generate", handleSummaryGenerate)
 	app.GET("/api/claude-activity", handleClaudeActivity)
 	app.GET("/api/repos", handleRepos)
 	app.GET("/api/diff", handleDiff)
