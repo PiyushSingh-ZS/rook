@@ -1078,9 +1078,10 @@
     }
     var typing = /^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || "");
     if (typing) return;
+    if (e.key === "?") { e.preventDefault(); showShortcuts(); return; }
     if (e.key === "/") { e.preventDefault(); var s = $("opRosterSearch"); s && s.focus(); return; }
     if (e.key === "g" || e.key === "G") { gPending = true; setTimeout(function () { gPending = false; }, 600); return; }
-    if (gPending) { gPending = false; if (e.key === "o") setView("operator"); else if (e.key === "i") setView("insights"); else if (e.key === "b") setView("board"); return; }
+    if (gPending) { gPending = false; var g = GO_KEYS[e.key]; if (g) setView(g); return; }
     if (activeView === "operator" && (e.key === "j" || e.key === "k" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault(); moveSelection(e.key === "j" || e.key === "ArrowDown" ? 1 : -1); return;
     }
@@ -1090,6 +1091,26 @@
     var rows = [].slice.call(document.querySelectorAll(".op-agent")).map(function (b) { return b.dataset.id; });
     var i = rows.indexOf(selectedId); i = Math.max(0, Math.min(rows.length - 1, i + dir));
     if (rows[i]) { selectAgent(rows[i]); var b = document.querySelector('.op-agent[data-id="' + rows[i] + '"]'); b && b.scrollIntoView({ block: "nearest" }); }
+  }
+  // g-prefix jump targets (g o, g i, …) — one per view.
+  var GO_KEYS = { o: "operator", i: "insights", b: "board", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
+  function showShortcuts() {
+    var rows = [
+      ["⌘K", "command palette — search agents, jump, run a command"],
+      ["?", "this shortcuts help"],
+      ["/", "focus the agent filter"],
+      ["j / k", "move down / up the roster"],
+      ["↑ / ↓", "move down / up the roster"],
+      ["1 – 5", "switch workspace tabs (Overview…Files)"],
+      ["g o", "go to Operator"], ["g i", "go to Insights"], ["g b", "go to Board"],
+      ["g h", "go to GitHub"], ["g s", "go to Summaries"], ["g d", "go to Dev servers"],
+      ["g a", "go to Audit"], ["g w", "go to Workspace"], ["g ,", "go to Settings"],
+      ["esc", "close this / the palette"]
+    ];
+    modal("Keyboard shortcuts",
+      '<div class="kbd-grid">' + rows.map(function (r) {
+        return '<div class="kbd-row"><kbd>' + esc(r[0]) + "</kbd><span>" + esc(r[1]) + "</span></div>";
+      }).join("") + "</div>");
   }
 
   // ---- boot ----------------------------------------------------------------
