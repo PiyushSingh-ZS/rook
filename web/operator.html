@@ -7,11 +7,14 @@
   <link rel="icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/vendor/xterm.css" />
   <link rel="stylesheet" href="/vendor/highlight.css" />
-  <link rel="stylesheet" href="/charts.css?v=op1" />
-  <link rel="stylesheet" href="/diffview.css?v=op1" />
-  <link rel="stylesheet" href="/board.css?v=op1" />
-  <link rel="stylesheet" href="/operator.css?v=op1" />
+  <link rel="stylesheet" href="/charts.css?v=op2" />
+  <link rel="stylesheet" href="/diffview.css?v=op2" />
+  <link rel="stylesheet" href="/board.css?v=op2" />
+  <link rel="stylesheet" href="/operator.css?v=op2" />
   <script>try{document.documentElement.setAttribute('data-theme', localStorage.getItem('opTheme')||'dark');}catch(e){}</script>
+  <script>/* the Operator UI is not a PWA — drop any stale service worker/caches left by the classic app so assets are never served stale */
+  if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister();});}).catch(function(){});}
+  if(window.caches&&caches.keys){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});}).catch(function(){});}</script>
 </head>
 <body>
   <div class="op-root">
@@ -61,14 +64,14 @@
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/highlight.min.js"></script>
-  <script src="/charts.js?v=op1"></script>
-  <script src="/diffview.js?v=op1"></script>
-  <script src="/board.js?v=op1"></script>
-  <script src="/operator.js?v=op1"></script>
-  <script src="/operator-github.js?v=op1"></script>
-  <script src="/operator-summaries.js?v=op1"></script>
-  <script src="/operator-dev.js?v=op1"></script>
-  <script src="/operator-audit.js?v=op1"></script>
-  <script src="/operator-workspace.js?v=op1"></script>
+  <script src="/charts.js?v=op2"></script>
+  <script src="/diffview.js?v=op2"></script>
+  <script src="/board.js?v=op2"></script>
+  <script src="/operator.js?v=op2"></script>
+  <script src="/operator-github.js?v=op2"></script>
+  <script src="/operator-summaries.js?v=op2"></script>
+  <script src="/operator-dev.js?v=op2"></script>
+  <script src="/operator-audit.js?v=op2"></script>
+  <script src="/operator-workspace.js?v=op2"></script>
 </body>
 </html>

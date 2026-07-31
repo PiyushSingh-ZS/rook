@@ -425,7 +425,7 @@
     if (s.summary) h += '<div class="ov-summary"><div class="ov-summary-label">Work done</div><div class="ov-summary-text">' + esc(s.summary) + "</div></div>";
     // context-window fill — how full the agent is (near-limit → likely compaction)
     if (s.contextTokens > 0) {
-      var lim = ctxLimit(s.model), ctx = s.contextTokens, pct = lim ? Math.min(100, Math.round(ctx / lim * 100)) : 0;
+      var ctx = s.contextTokens, lim = ctxLimit(s.model, ctx), pct = lim ? Math.min(100, Math.round(ctx / lim * 100)) : 0;
       var cls = pct >= 85 ? "crit" : pct >= 60 ? "warn" : "ok";
       h += '<div class="ov-ctx"><div class="ov-ctx-head"><span class="ov-ctx-k">Context window</span><span class="ov-ctx-v mono">' + fmtTokens(ctx) + " / ~" + fmtTokens(lim) + " · " + pct + "% full</span></div>" +
         '<div class="ov-ctx-bar"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
@@ -473,9 +473,10 @@
     });
   }
   function stat(k, v, wrap) { return '<div class="ov-stat"><div class="k">' + k + '</div><div class="v' + (wrap ? " wrap" : "") + '">' + v + "</div></div>"; }
-  // Claude's standard context window is ~200k tokens (1M is opt-in beta rook
-  // can't detect), so 200k is the honest denominator for the fill gauge.
-  function ctxLimit(model) { return 200000; }
+  // Claude's context window is ~200k by default, or ~1M with the long-context
+  // beta. rook can't read the setting, but a turn that already read >200k tokens
+  // is unambiguously on the 1M window — so pick the smallest window that fits.
+  function ctxLimit(model, used) { return (used || 0) > 200000 ? 1000000 : 200000; }
 
   function renderFiles() {
     var p = $("wsFiles"); if (!p || p.dataset.done === selectedId) { if (p) p.dataset.done = selectedId; }
