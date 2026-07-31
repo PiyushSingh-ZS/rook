@@ -843,9 +843,30 @@
       '<label class="set-field"><span class="set-k">Model</span><select class="set-in" id="sp_model"><option value="default">Default (account)</option><option value="haiku">Haiku — cheapest</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label>' +
       '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
       '<label class="set-toggle"><input type="checkbox" id="sp_wt" ' + (prefill.worktree ? "checked" : "") + ' /><span><b>Isolate in a git worktree</b><span class="set-hint">don\'t touch your working checkout</span></span></label>' +
+      '<div id="sp_docs_wrap" style="display:none"><label class="set-toggle"><input type="checkbox" id="sp_docs" checked /><span><b>Follow this repo\'s agent instructions</b><span class="set-hint" id="sp_docs_list"></span></span></label></div>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
       function (ov, close) {
         if (prefill.cwd) $("sp_prompt").focus(); else $("sp_cwd").focus();
+        // detect a repo's AGENTS.md/CLAUDE.md etc. so the agent can be told to follow them
+        var docFiles = [];
+        function loadDocs() {
+          var cwd = $("sp_cwd").value.trim(), wrap = $("sp_docs_wrap");
+          if (!wrap) return;
+          if (cwd.length < 3) { wrap.style.display = "none"; docFiles = []; return; }
+          fetch("/api/agentdocs?path=" + encodeURIComponent(cwd), { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+              if (j && j.data) j = j.data;
+              docFiles = (j && j.files) || [];
+              if (!docFiles.length) { wrap.style.display = "none"; return; }
+              wrap.style.display = "";
+              $("sp_docs_list").textContent = docFiles.map(function (f) { return f.rel; }).join(" · ");
+            })
+            .catch(function () { wrap.style.display = "none"; docFiles = []; });
+        }
+        $("sp_cwd").addEventListener("input", loadDocs);
+        $("sp_cwd").addEventListener("change", loadDocs);
+        if (prefill.cwd) loadDocs();
         $("sp_go").addEventListener("click", async function () {
           var cwd = $("sp_cwd").value;
           if (!cwd) { toast("Working directory required", "err"); return; }
@@ -853,7 +874,13 @@
           var name = $("sp_name").value.trim();
           if (!name) name = (cwd.replace(/\/+$/, "").split("/").pop() || "agent") + "-" + Date.now().toString(36).slice(-4);
           name = name.replace(/[^A-Za-z0-9._-]+/g, "-");
-          var body = { name: name, cwd: cwd, agent: $("sp_agent").value, model: $("sp_model").value, prompt: $("sp_prompt").value, worktree: $("sp_wt").checked };
+          var prompt = $("sp_prompt").value;
+          // opt-in: tell the agent to read + follow the repo's instruction files
+          if (docFiles.length && $("sp_docs") && $("sp_docs").checked) {
+            var pre = "Before doing anything else, read these repo instruction files and follow them for the rest of this session: " + docFiles.map(function (f) { return f.rel; }).join(", ") + ".";
+            prompt = prompt.trim() ? pre + "\n\n" + prompt : pre;
+          }
+          var body = { name: name, cwd: cwd, agent: $("sp_agent").value, model: $("sp_model").value, prompt: prompt, worktree: $("sp_wt").checked };
           try {
             var r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             var d = await r.json(); if (d.data) d = d.data;

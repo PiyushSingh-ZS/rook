@@ -109,6 +109,7 @@ func main() {
 	app.POST("/api/summary/generate", handleSummaryGenerate)
 	app.GET("/api/sessions/history", handleSessionHistory)
 	app.POST("/api/resume", handleResume)
+	app.GET("/api/agentdocs", handleAgentDocs)
 	app.GET("/api/claude-activity", handleClaudeActivity)
 	app.GET("/api/repos", handleRepos)
 	app.GET("/api/diff", handleDiff)
