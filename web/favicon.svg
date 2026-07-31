@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- rook: angular corvid head, risograph palette (coral beak on cream) -->
+  <rect width="64" height="64" rx="15" fill="#f2ede1"/>
+  <path d="M20 41L13 27L23 13L33 21L57 25L37 30L32 33L27 41Z" fill="#3b5bdb"/>
+  <path d="M33 21L57 25L37 30Z" fill="#ff5c5c"/>
+  <circle cx="25" cy="23" r="2.4" fill="#f2ede1"/>
+</svg>

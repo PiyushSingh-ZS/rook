@@ -1,0 +1,927 @@
+/* ============================================================================
+   rook Operator console — live renderer. Self-contained: no dependency on the
+   legacy app.js. Reuses window.rookCharts, window.renderDiffV2, and the
+   vendored xterm globals. Workspace-first: a live agent roster beside a tabbed
+   workspace (Overview / Terminal / Diff / Trace / Files).
+   ========================================================================== */
+(function () {
+  "use strict";
+  var OP_VERSION = "1";
+  var POLL_MS = 2000;
+
+  // ---- tiny helpers --------------------------------------------------------
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function fmtTokens(n) { if (n == null) return "0"; if (n >= 1e9) return (n / 1e9).toFixed(2) + "B"; if (n >= 1e6) return (n / 1e6).toFixed(2) + "M"; if (n >= 1e3) return (n / 1e3).toFixed(1) + "k"; return String(n); }
+  function fmtUSD(n) { if (!n) return "$0"; if (n < 0.01) return "<$0.01"; if (n < 100) return "$" + n.toFixed(2); return "$" + Math.round(n).toLocaleString(); }
+  function ago(ms, now) { if (!ms) return "—"; var s = Math.max(0, Math.floor((now - ms) / 1000)); if (s < 60) return s + "s"; var m = Math.floor(s / 60); if (m < 60) return m + "m"; var h = Math.floor(m / 60); if (h < 24) return h + "h"; return Math.floor(h / 24) + "d"; }
+  function shortModel(m) { return m ? m.replace(/^claude-/, "").replace(/-\d{8}$/, "") : ""; }
+  function statusOf(s) { return s.alive ? (s.status || "idle") : "dead"; }
+  function groupOf(s) { var st = statusOf(s); if (st === "waiting") return "needs"; if (st === "busy" || st === "shell") return "working"; if (st === "dead") return "done"; return "idle"; }
+
+  // ---- icons (inline, one stroke set) --------------------------------------
+  var I = {
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+    chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-6"/></svg>',
+    columns: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="16" y="4" width="5" height="13" rx="1.5"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H23a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>',
+    terminal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 4 4-4 4M12 16h6"/><rect x="2" y="3" width="20" height="18" rx="2.5"/></svg>',
+    diff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7M18 9v6"/><circle cx="18" cy="6" r="2.5"/><path d="M12 6h3.5"/></svg>',
+    trace: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg>',
+    external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/></svg>',
+    inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg>',
+    review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    pr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/><circle cx="18" cy="18" r="2.5"/><path d="M18 15.5V10a4 4 0 0 0-4-4h-3M13 3l-2 3 2 3"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L3 21l1.9-4A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>'
+  };
+
+  // ghRefFromSession detects the PR/issue an agent is working on, so its
+  // workspace can surface the description + comments in a Context tab. Prefers a
+  // github URL in the prompt/summary; falls back to a #number in the name/cwd
+  // resolved against the discovered repo's remote.
+  function ghRefFromSession(s) {
+    if (!s) return null;
+    var hay = (s.lastPrompt || "") + " " + (s.summary || "") + " " + (s.title || "") + " " + (s.cwd || "");
+    var m = hay.match(/https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/i);
+    if (m) return { owner: m[1], repo: m[2], kind: m[3] === "pull" ? "pr" : "issue", number: parseInt(m[4], 10) };
+    // rook's own launch-prompt format ("… pull request #N in owner/repo …"),
+    // which survives even when lastPrompt is truncated before the URL.
+    var p2 = hay.match(/(pull request|pull|\bpr|issue)\s+#?(\d+)\s+in\s+([\w.-]+)\/([\w.-]+)/i);
+    if (p2) return { owner: p2[3], repo: p2[4].replace(/[.:,)]+$/, ""), kind: /issue/i.test(p2[1]) ? "issue" : "pr", number: parseInt(p2[2], 10) };
+    var nm = (s.cwd || "") + " " + (s.title || "");
+    var pr = nm.match(/(?:review-)?pr[-# ]?(\d+)/i), iss = nm.match(/issue[-# ]?(\d+)/i);
+    var kind, num;
+    if (pr) { kind = "pr"; num = parseInt(pr[1], 10); } else if (iss) { kind = "issue"; num = parseInt(iss[1], 10); } else return null;
+    // repo comes from the session's git remote (resolved server-side, worktrees
+    // included); fall back to matching the project name against discovered repos.
+    var repoStr = s.repo || "";
+    if (!repoStr || repoStr.indexOf("/") < 0) {
+      var proj = (s.project || "").toLowerCase();
+      var r = repoList.filter(function (x) { return (x.name || "").toLowerCase() === proj && x.remote; })[0];
+      repoStr = r ? r.remote : "";
+    }
+    if (!repoStr || repoStr.indexOf("/") < 0) return null;
+    var ow = repoStr.split("/");
+    return { owner: ow[0], repo: ow[1], kind: kind, number: num };
+  }
+  function mdLite(s) {
+    s = esc(s || "");
+    s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+    return s;
+  }
+  function ghStatePill(state, draft) {
+    var st = (state || "").toUpperCase();
+    if (draft) return '<span class="pill idle">draft</span>';
+    if (st === "MERGED" || st === "APPROVED") return '<span class="pill done">' + (st === "MERGED" ? "merged" : "approved") + "</span>";
+    if (st === "CLOSED" || st === "CHANGES_REQUESTED") return '<span class="pill dead">' + (st === "CLOSED" ? "closed" : "changes requested") + "</span>";
+    if (st === "OPEN") return '<span class="pill busy">open</span>';
+    return st ? '<span class="pill idle">' + esc(st.toLowerCase()) + "</span>" : "";
+  }
+  function brandMark() { return '<svg viewBox="0 0 32 32" fill="none"><path d="M16 5 25 12l-4 3 5 8-10-6-10 6 5-8-4-3z" fill="#0a0a0c"/><circle cx="16" cy="13" r="2" fill="#ff5c3a"/></svg>'; }
+
+  // ---- state ---------------------------------------------------------------
+  var state = null, stale = false;
+  var selectedId = localStorage.getItem("opSel") || null;
+  var activeView = localStorage.getItem("opView") || "operator";
+  var rosterFilter = "";
+  var ws = { id: null, tab: "overview", term: null, diffLoaded: false, traceLoaded: false };
+
+  // discovered local repos ({path,name,branch,remote}) — lets us auto-resolve a
+  // working directory instead of making the user type it.
+  var repoList = [];
+  async function fetchRepos() { try { var r = await fetch("/api/repos", { cache: "no-store" }); var j = await r.json(); if (j && j.data) j = j.data; repoList = j || []; } catch (e) {} }
+  function rememberRepoPath(nameWithOwner, p) { try { localStorage.setItem("opRepoPath:" + String(nameWithOwner).toLowerCase(), p); } catch (e) {} }
+  // resolveRepoPath: given a GitHub "owner/repo", find its local checkout —
+  // exact git-remote match first, then a remembered path, then folder-name match.
+  function resolveRepoPath(nameWithOwner) {
+    if (!nameWithOwner) return "";
+    var nwo = String(nameWithOwner).toLowerCase(), repo = nwo.split("/").pop();
+    var m = repoList.filter(function (r) { return (r.remote || "").toLowerCase() === nwo; })[0];
+    if (m) return m.path;
+    try { var mem = localStorage.getItem("opRepoPath:" + nwo); if (mem) return mem; } catch (e) {}
+    m = repoList.filter(function (r) { return (r.name || "").toLowerCase() === repo; })[0];
+    return m ? m.path : "";
+  }
+  function repoDatalist(id) { return '<datalist id="' + id + '">' + repoList.map(function (r) { return '<option value="' + esc(r.path) + '">' + esc(r.name) + (r.remote ? " · " + esc(r.remote) : "") + "</option>"; }).join("") + "</datalist>"; }
+
+  // ---- data ----------------------------------------------------------------
+  function sessions() { return (state && state.sessions) || []; }
+  function findAgent(id) { return sessions().filter(function (s) { return s.sessionId === id; })[0]; }
+  function now() { return (state && state.now) || Date.now(); }
+
+  async function poll() {
+    try {
+      var r = await fetch("/api/state", { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      state = await r.json(); if (state.data) state = state.data;
+      stale = false;
+      onState();
+    } catch (e) { stale = true; setConn(); }
+  }
+
+  function onState() {
+    setConn(); setStatusCluster();
+    if (!selectedId || !findAgent(selectedId)) {
+      var first = pickDefault(); if (first) selectedId = first.sessionId;
+    }
+    if (activeView === "operator") {
+      renderRoster();
+      if (ws.id !== selectedId) buildWorkspace();
+      else if (ws.tab === "overview") renderOverview(); // live-refresh overview only
+    } else if (activeView === "insights") {
+      renderInsights();
+    } else if (activeView === "board") {
+      renderBoard();
+    } else if (extRender) {
+      extRender();
+    }
+    if (paletteOpen) renderPaletteList();
+  }
+
+  // shared helpers handed to plug-in views (operator-*.js) so they render with
+  // the exact same formatting + toasts and never invent their own.
+  function opCtx() {
+    return { el: el, esc: esc, fmtTokens: fmtTokens, fmtUSD: fmtUSD, ago: ago, shortModel: shortModel, statusOf: statusOf, icon: I, now: now, toast: toast, charts: window.rookCharts, selectAgent: function (id) { setView("operator"); selectAgent(id); }, launch: function (prefill) { newAgent(prefill); }, resolveRepo: resolveRepoPath, rememberRepo: rememberRepoPath, getRepos: function () { return repoList; } };
+  }
+
+  function pickDefault() {
+    var ss = sessions();
+    var order = { needs: 0, working: 1, idle: 2, done: 3 };
+    return ss.slice().sort(function (a, b) { return (order[groupOf(a)] - order[groupOf(b)]) || (b.updatedAt - a.updatedAt); })[0];
+  }
+
+  // ---- shell chrome --------------------------------------------------------
+  function setConn() {
+    var c = $("opConn"); if (!c) return;
+    c.classList.toggle("stale", stale);
+    c.querySelector(".ct").textContent = stale ? "reconnecting" : "live";
+  }
+  function setStatusCluster() {
+    var ss = sessions();
+    var working = ss.filter(function (s) { return groupOf(s) === "working"; }).length;
+    var needs = ss.filter(function (s) { return groupOf(s) === "needs"; }).length;
+    var w = $("opStatWorking"), n = $("opStatNeeds");
+    if (w) w.innerHTML = '<i class="dot busy"></i><b>' + working + "</b> working";
+    if (n) n.innerHTML = '<i class="dot waiting"></i><b>' + needs + "</b> need you";
+  }
+
+  // registry for plug-in views (operator-<name>.js register window.OP_VIEWS[name])
+  window.OP_VIEWS = window.OP_VIEWS || {};
+  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace" };
+  var extRender = null; // active plug-in view's render() for live refresh on poll
+
+  function setView(v) {
+    activeView = v; localStorage.setItem("opView", v);
+    document.querySelectorAll(".op-rail-btn[data-view]").forEach(function (b) { b.classList.toggle("active", b.dataset.view === v); });
+    var crumb = $("opCrumb");
+    crumb.querySelector("b").textContent = TITLES[v] || "Operator";
+    var host = $("opView");
+    // host.innerHTML wipes every view's DOM (including the terminal); drop the
+    // live PTY and the built-workspace guard so the workspace re-renders when we
+    // return to Operator instead of the guard blocking it (blank detail bug).
+    teardownTerm(); ws.id = null; extRender = null;
+    host.innerHTML = "";
+    if (window.OP_VIEWS[v]) { var api = window.OP_VIEWS[v]; api.build(host, opCtx()); extRender = function () { try { api.render(state, opCtx()); } catch (e) {} }; extRender(); return; }
+    if (v === "operator") { host.appendChild(buildConsole()); onState(); }
+    else if (v === "insights") { host.appendChild(buildInsights()); renderInsights(); }
+    else if (v === "board") { host.appendChild(buildBoardView()); renderBoard(); }
+    else { buildSettings(host); }
+  }
+
+  // ---- operator console ----------------------------------------------------
+  function buildConsole() {
+    var root = el("div", "op-console");
+    var roster = el("aside", "op-roster");
+    roster.innerHTML =
+      '<div class="op-roster-head">' +
+        '<input class="op-roster-search" id="opRosterSearch" placeholder="Filter agents…" />' +
+        '<button class="op-roster-new" id="opNewAgent" title="New agent (n)">' + I.plus + "</button>" +
+      "</div>" +
+      '<div class="op-roster-list" id="opRosterList"></div>';
+    var work = el("section", "op-workspace"); work.id = "opWorkspace";
+    work.innerHTML = '<div class="ws-empty">Select an agent</div>';
+    root.appendChild(roster); root.appendChild(work);
+    setTimeout(function () {
+      var s = $("opRosterSearch");
+      if (s) { s.value = rosterFilter; s.addEventListener("input", function () { rosterFilter = s.value.toLowerCase(); renderRoster(); }); }
+      $("opNewAgent") && $("opNewAgent").addEventListener("click", newAgent);
+    }, 0);
+    return root;
+  }
+
+  var GROUPS = [["needs", "Needs you"], ["working", "Working"], ["idle", "Idle"], ["done", "Done"]];
+  function renderRoster() {
+    var list = $("opRosterList"); if (!list) return;
+    var ss = sessions().slice();
+    if (rosterFilter) ss = ss.filter(function (s) { return ((s.title || "") + " " + (s.project || "") + " " + (s.model || "")).toLowerCase().indexOf(rosterFilter) >= 0; });
+    var by = { needs: [], working: [], idle: [], done: [] };
+    ss.forEach(function (s) { by[groupOf(s)].push(s); });
+    Object.keys(by).forEach(function (k) { by[k].sort(function (a, b) { return b.updatedAt - a.updatedAt; }); });
+    var html = "";
+    GROUPS.forEach(function (g) {
+      var arr = by[g[0]]; if (!arr.length) return;
+      html += '<div class="op-group-label ' + (g[0] === "needs" ? "needs" : "") + '">' + esc(g[1]) + '<span class="cnt">' + arr.length + "</span></div>";
+      arr.forEach(function (s) {
+        var st = statusOf(s);
+        html += '<button class="op-agent ' + (g[0] === "needs" ? "needs " : "") + (s.sessionId === selectedId ? "sel" : "") + '" data-id="' + esc(s.sessionId) + '">' +
+          '<span class="op-agent-status"><i class="dot ' + st + '"></i></span>' +
+          '<span class="op-agent-main">' +
+            '<span class="op-agent-title">' + esc(s.title || s.project || "session") + "</span>" +
+            '<span class="op-agent-meta">' + esc(s.project || "—") + " · " + esc(shortModel(s.model) || "?") + "</span>" +
+          "</span>" +
+          '<span class="op-agent-right"><span class="op-agent-tok">' + fmtTokens(s.tokensTotal) + '</span><span class="op-agent-ago">' + ago(s.updatedAt, now()) + "</span></span>" +
+        "</button>";
+      });
+    });
+    if (!html) html = '<div class="op-empty">' + I.inbox + '<div class="t">No agents</div><div class="h">launch one with a tmux session</div></div>';
+    list.innerHTML = html;
+    list.querySelectorAll(".op-agent").forEach(function (b) { b.addEventListener("click", function () { selectAgent(b.dataset.id); }); });
+  }
+
+  function selectAgent(id) {
+    if (selectedId === id && ws.id === id) return;
+    selectedId = id; localStorage.setItem("opSel", id);
+    renderRoster();
+    buildWorkspace();
+  }
+
+  // ---- workspace (tabbed) --------------------------------------------------
+  var TABS = [
+    ["overview", "Overview", I.grid],
+    ["terminal", "Terminal", I.terminal],
+    ["diff", "Diff", I.diff],
+    ["trace", "Trace", I.trace],
+    ["files", "Files", I.file]
+  ];
+  function teardownTerm() { if (ws.term) { try { ws.term.ws && ws.term.ws.close(); } catch (e) {} try { ws.term.xt && ws.term.xt.dispose(); } catch (e) {} try { ws.term.ro && ws.term.ro.disconnect(); } catch (e) {} ws.term = null; } }
+
+  function buildWorkspace() {
+    var host = $("opWorkspace"); if (!host) return;
+    var s = findAgent(selectedId);
+    // Bail without claiming ws.id when state isn't loaded yet, so the next poll
+    // (once the agent exists) still passes the ws.id !== selectedId guard.
+    if (!s) { host.innerHTML = '<div class="ws-empty">Select an agent</div>'; ws.id = null; return; }
+    teardownTerm();
+    ws.id = selectedId; ws.diffLoaded = false; ws.traceLoaded = false; ws.ctxLoaded = false;
+    if (!ws.tab) ws.tab = "overview";
+    var st = statusOf(s);
+    var changed = (s.changedFiles || []).length;
+    var tabHTML = TABS.map(function (t) {
+      var badge = "";
+      if (t[0] === "files" && changed) badge = '<span class="tab-badge">' + changed + "</span>";
+      if (t[0] === "trace" && (s.toolCalls || []).length) badge = '<span class="tab-badge">' + (s.toolCalls || []).length + "</span>";
+      var dis = (t[0] === "terminal" && !(s.controllable && s.tmuxPane)) ? ' style="opacity:.4;pointer-events:none"' : "";
+      var dis2 = (t[0] === "diff" && !s.cwd) ? ' style="opacity:.4;pointer-events:none"' : "";
+      return '<button class="ws-tab ' + (t[0] === ws.tab ? "on" : "") + '" data-tab="' + t[0] + '"' + dis + dis2 + ">" + t[2] + "<span>" + t[1] + "</span>" + badge + "</button>";
+    }).join("");
+    ws.ghRef = ghRefFromSession(s);
+    if (ws.ghRef) {
+      var ctxLabel = (ws.ghRef.kind === "pr" ? "PR #" : "Issue #") + ws.ghRef.number;
+      tabHTML += '<button class="ws-tab ' + (ws.tab === "context" ? "on" : "") + '" data-tab="context">' + I.chat + "<span>" + ctxLabel + "</span></button>";
+    }
+    host.innerHTML =
+      '<div class="ws-head">' +
+        '<div class="ws-head-main">' +
+          '<div class="ws-title">' + esc(s.title || s.project || "session") + '<span class="pill ' + st + '">' + st + "</span></div>" +
+          '<div class="ws-sub"><span>' + esc(s.project || "—") + '</span><span>' + esc(shortModel(s.model) || "?") + '</span><span>' + fmtTokens(s.tokensTotal) + " tok</span><span>" + fmtUSD(s.costUsd) + "</span></div>" +
+        "</div>" +
+        '<div class="ws-actions">' +
+          (s.cwd ? '<button class="btn sm" id="wsPR" title="Open a pull request from this agent\'s branch">' + I.pr + "PR</button>" : "") +
+          (s.cwd ? '<button class="btn sm" id="wsReview">' + I.review + "Review</button>" : "") +
+          '<button class="btn sm" id="wsLogs">' + I.external + "Logs</button>" +
+          (s.controllable && s.alive ? '<button class="btn sm danger" id="wsStop">' + I.stop + "Stop</button>" : "") +
+        "</div>" +
+      "</div>" +
+      '<div class="ws-tabs" id="wsTabs">' + tabHTML + "</div>" +
+      '<div class="ws-body" id="wsBody">' +
+        '<div class="ws-panel overview-panel" id="wsOverview"></div>' +
+        '<div class="ws-panel term-panel" id="wsTerm"></div>' +
+        '<div class="ws-panel" id="wsDiff"></div>' +
+        '<div class="ws-panel" id="wsTrace"></div>' +
+        '<div class="ws-panel" id="wsFiles"></div>' +
+        '<div class="ws-panel" id="wsContext"></div>' +
+      "</div>";
+    host.querySelectorAll(".ws-tab").forEach(function (b) { b.addEventListener("click", function () { switchTab(b.dataset.tab); }); });
+    $("wsReview") && $("wsReview").addEventListener("click", function () { switchTab("diff"); });
+    $("wsPR") && $("wsPR").addEventListener("click", function () { createPR(s); });
+    $("wsLogs") && $("wsLogs").addEventListener("click", function () { window.open("/api/logs?session=" + encodeURIComponent(s.sessionId), "_blank"); });
+    $("wsStop") && $("wsStop").addEventListener("click", function () { if (confirm("Stop this agent? This kills its tmux pane.")) killAgent(s); });
+    activateTab(ws.tab);
+  }
+
+  function switchTab(tab) { ws.tab = tab; document.querySelectorAll(".ws-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === tab); }); activateTab(tab); }
+  function activateTab(tab) {
+    var map = { overview: "wsOverview", terminal: "wsTerm", diff: "wsDiff", trace: "wsTrace", files: "wsFiles", context: "wsContext" };
+    Object.keys(map).forEach(function (k) { var p = $(map[k]); if (p) p.classList.toggle("on", k === tab); });
+    if (tab === "overview") renderOverview();
+    else if (tab === "files") renderFiles();
+    else if (tab === "trace") renderTraceTab();
+    else if (tab === "diff") loadDiff();
+    else if (tab === "terminal") openTermTab();
+    else if (tab === "context") renderContext();
+  }
+
+  // renderContext shows the PR/issue an agent is reviewing — description,
+  // conversation + review comments, and linked issues — fetched from GitHub.
+  async function renderContext() {
+    var p = $("wsContext"); if (!p) return;
+    var ref = ws.ghRef; if (!ref) { p.innerHTML = '<div class="ov"><div class="op-empty">' + I.chat + '<div class="t">No linked PR or issue</div></div></div>'; return; }
+    var key = ref.owner + "/" + ref.repo + "#" + ref.number;
+    if (ws.ctxLoaded && p.dataset.for === key) return;
+    ws.ctxLoaded = true; p.dataset.for = key;
+    p.innerHTML = '<div class="ov"><div class="op-empty">Loading ' + esc(ref.kind === "pr" ? "PR" : "issue") + " #" + ref.number + "…</div></div>";
+    var repo = ref.owner + "/" + ref.repo;
+    var url = "/api/github/" + (ref.kind === "pr" ? "pr" : "issue") + "?repo=" + encodeURIComponent(repo) + "&number=" + ref.number;
+    var d; try { d = await (await fetch(url, { cache: "no-store" })).json(); if (d && d.data) d = d.data; } catch (e) { d = null; }
+    if (!d || d.error || d.message && !d.title) { p.innerHTML = '<div class="ov"><div class="op-empty">' + I.alert + '<div class="t">Couldn\'t load ' + esc(repo) + " #" + ref.number + '</div><div class="h">' + esc((d && (d.error && (d.error.message || d.error) || d.message)) || "gh CLI error") + "</div></div></div>"; return; }
+    p.innerHTML = ctxHTML(d, ref, repo);
+    p.querySelectorAll("[data-open]").forEach(function (b) { b.addEventListener("click", function () { window.open(b.dataset.open, "_blank"); }); });
+    // for a PR, pull each linked issue's full content and inline it
+    if (ref.kind === "pr") {
+      var links = (d.closingIssuesReferences || []).filter(function (x) { return x && x.number; });
+      var box = $("ctxLinked");
+      if (box && links.length) links.forEach(function (li) {
+        fetch("/api/github/issue?repo=" + encodeURIComponent(repo) + "&number=" + li.number, { cache: "no-store" })
+          .then(function (r) { return r.json(); }).then(function (j) {
+            if (j && j.data) j = j.data; if (!j || !j.title) return;
+            var card = el("div", "ctx-linkcard");
+            card.innerHTML = '<div class="ctx-c-head"><b>Linked issue #' + esc(j.number) + "</b>" + ghStatePill(j.state) + '<span class="ctx-when">' + esc(j.title || "") + "</span></div>" +
+              '<div class="ctx-c-body">' + (j.body && j.body.trim() ? mdLite(j.body) : '<span class="ctx-empty">No description.</span>') + "</div>";
+            box.appendChild(card);
+          }).catch(function () {});
+      });
+    }
+  }
+  function ctxComment(c) {
+    var who = (c.author && c.author.login) || c.user || "someone";
+    var when = c.createdAt || c.submittedAt || c.created_at;
+    var state = c.state ? ghStatePill(c.state) : "";
+    var body = c.body && c.body.trim() ? mdLite(c.body) : '<span class="ctx-empty">(no comment body)</span>';
+    return '<div class="ctx-comment"><div class="ctx-c-head"><b>@' + esc(who) + "</b>" + state + (when ? '<span class="ctx-when">' + esc(ago(Date.parse(when), Date.now())) + " ago</span>" : "") + "</div><div class=\"ctx-c-body\">" + body + "</div></div>";
+  }
+  function ctxHTML(d, ref, repo) {
+    var branch = ref.kind === "pr" && d.headRefName ? '<span class="mono">' + esc(d.headRefName) + " → " + esc(d.baseRefName || "") + "</span>" : "";
+    var links = (d.closingIssuesReferences || []).filter(function (x) { return x && x.number; });
+    var reviews = (d.reviews || []).filter(function (r) { return r && r.body && r.body.trim(); });
+    var comments = d.comments || [];
+    var h = '<div class="ov ctx-wrap">' +
+      '<div class="ctx-head"><div class="ctx-title">' + esc(d.title || "") + " " + ghStatePill(d.state, d.isDraft) + "</div>" +
+        '<div class="ws-sub"><span class="mono">' + esc(repo) + " #" + d.number + "</span><span>@" + esc((d.author && d.author.login) || "") + "</span>" + (branch ? "<span>" + branch + "</span>" : "") +
+        '<button class="btn sm" data-open="' + esc(d.url || "") + '">' + I.external + "Open on GitHub</button></div></div>";
+    if (links.length) {
+      h += '<div class="ov-sec-label">Linked issues</div><div class="ov-files">' + links.map(function (x) {
+        return '<button class="ov-file" data-open="' + esc(x.url || "") + '">#' + esc(x.number) + " · " + esc((x.title || "").slice(0, 60)) + "</button>";
+      }).join("") + '</div><div class="ctx-linked" id="ctxLinked"></div>';
+    }
+    h += '<div class="ov-sec-label">Description</div><div class="ctx-body">' + (d.body && d.body.trim() ? mdLite(d.body) : '<span class="ctx-empty">No description provided.</span>') + "</div>";
+    if (ref.kind === "pr") {
+      var commits = d.commits || [];
+      h += '<div class="ov-sec-label">Commits (' + commits.length + ")</div>";
+      h += commits.length ? '<div class="ctx-commits">' + commits.map(function (c) {
+        var sha = (c.oid || "").slice(0, 7), who = (c.authors && c.authors[0] && (c.authors[0].login || c.authors[0].name)) || "";
+        return '<div class="ctx-commit"><span class="ctx-sha mono">' + esc(sha) + '</span><span class="ctx-cmsg">' + esc(c.messageHeadline || "") + "</span>" + (who ? '<span class="ctx-cauthor">@' + esc(who) + "</span>" : "") + "</div>";
+      }).join("") + "</div>" : '<div class="ctx-empty" style="padding:8px 0">No commits.</div>';
+    }
+    if (reviews.length) h += '<div class="ov-sec-label">Reviews (' + reviews.length + ")</div>" + reviews.map(ctxComment).join("");
+    h += '<div class="ov-sec-label">Comments (' + comments.length + ")</div>" + (comments.length ? comments.map(ctxComment).join("") : '<div class="ctx-empty" style="padding:8px 0">No comments yet.</div>');
+    return h + "</div>";
+  }
+
+  function renderOverview() {
+    var p = $("wsOverview"); if (!p) return;
+    var s = findAgent(selectedId); if (!s) return;
+    var st = statusOf(s);
+    var h = "";
+    if (st === "waiting") {
+      var gate = s.controllable
+        ? '<div class="ov-gate">' +
+            '<button class="btn allow" id="ovAllow">' + I.check + "Allow <kbd>a</kbd></button>" +
+            '<button class="btn danger" id="ovDeny">' + I.x + "Deny <kbd>d</kbd></button>" +
+            '<button class="btn sm" data-key="2">opt 2</button>' +
+            '<button class="btn sm" data-key="3">opt 3</button>' +
+            '<button class="btn sm" data-key="interrupt" title="send Ctrl-C">interrupt</button>' +
+          "</div>" +
+          '<div class="ov-reply"><textarea id="ovReply" placeholder="Reply to the agent…  (⌘↵ to send)"></textarea>' +
+          '<button class="btn primary" id="ovSend">' + I.send + "Send</button></div>"
+        : '<div class="ov-hint">not in tmux — launch with <code>tmux new -s name claude</code> to answer from here</div>';
+      h += '<div class="ov-alert reveal">' +
+        '<div class="ov-alert-label">' + I.alert + "Waiting — needs you</div>" +
+        '<div class="ov-alert-text">' + esc(s.asking || s.lastPrompt || "(no message captured)") + "</div>" +
+        gate +
+      "</div>";
+    } else if (s.activity) {
+      h += '<div class="ov-summary reveal"><div class="ov-summary-label">Now</div><div class="ov-summary-text">' + esc(s.activity) + "</div></div>";
+    }
+    if (s.summary) h += '<div class="ov-summary"><div class="ov-summary-label">Work done</div><div class="ov-summary-text">' + esc(s.summary) + "</div></div>";
+    // context-window fill — how full the agent is (near-limit → likely compaction)
+    if (s.contextTokens > 0) {
+      var lim = ctxLimit(s.model), ctx = s.contextTokens, pct = lim ? Math.min(100, Math.round(ctx / lim * 100)) : 0;
+      var cls = pct >= 85 ? "crit" : pct >= 60 ? "warn" : "ok";
+      h += '<div class="ov-ctx"><div class="ov-ctx-head"><span class="ov-ctx-k">Context window</span><span class="ov-ctx-v mono">' + fmtTokens(ctx) + " / ~" + fmtTokens(lim) + " · " + pct + "% full</span></div>" +
+        '<div class="ov-ctx-bar"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
+        (pct >= 85 ? '<div class="ov-ctx-hint">near the limit — the agent may compact its context soon</div>' : "") + "</div>";
+    }
+    var changed = (s.changedFiles || []).length;
+    var health = s.health ? (s.health.level === "alert" ? "⚠ " : "") + (s.health.reason || s.health.level) : "healthy";
+    h += '<div class="ov-stats">' +
+      stat("Agent", esc(s.provider || "claude")) +
+      stat("Status", st) +
+      stat("Model", esc(shortModel(s.model) || "—")) +
+      stat("Version", esc(s.version || "—")) +
+      stat("Tokens", fmtTokens(s.tokensTotal) + " total") +
+      stat("Cost (est)", fmtUSD(s.costUsd)) +
+      stat("Last 5h / 7d", fmtTokens(s.tokens5h) + " / " + fmtTokens(s.tokens7d)) +
+      stat("Running for", s.startedAt ? ago(s.startedAt, now()) : "—") +
+      stat("Updated", ago(s.updatedAt, now()) + " ago") +
+      stat("Health", esc(health)) +
+      stat("Changed files", changed ? String(changed) : "0") +
+      stat("PID", (s.pid || "—") + (s.alive ? "" : " (exited)")) +
+      '<div class="ov-stat full"><div class="k">cwd</div><div class="v wrap">' + esc(s.cwd || "—") + "</div></div>" +
+      "</div>";
+    // what the agent has been doing — tool-call mix
+    var byTool = {}; (s.toolCalls || []).forEach(function (t) { byTool[t.name] = (byTool[t.name] || 0) + 1; });
+    var toolNames = Object.keys(byTool).sort(function (a, b) { return byTool[b] - byTool[a]; });
+    if (toolNames.length) h += '<div class="ov-sec-label">Tool usage</div><div class="ov-tools">' + toolNames.map(function (n) { return '<span class="ov-tool">' + esc(n) + '<b>' + byTool[n] + "</b></span>"; }).join("") + "</div>";
+    if ((s.skills || []).length) h += '<div class="ov-sec-label">Project skills</div><div class="ov-files">' + s.skills.map(function (k) { return '<span class="ov-file">' + esc(k) + "</span>"; }).join("") + "</div>";
+    var tools = (s.toolCalls || []).slice(-14).reverse();
+    h += '<div class="ov-sec-label">Recent activity</div>';
+    if (tools.length) h += '<div class="ov-activity">' + tools.map(function (t) {
+      return '<div class="ov-act"><span class="t">' + esc(new Date(t.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) + '</span><span class="n">' + esc(t.name) + '</span><span class="s">' + esc(t.summary || "") + "</span></div>";
+    }).join("") + "</div>";
+    else h += '<div class="op-empty">' + I.trace + '<div class="t">No tool calls yet</div></div>';
+    p.innerHTML = '<div class="ov">' + h + "</div>";
+    var send = $("ovSend"), ta = $("ovReply");
+    if (send && ta) {
+      var doSend = function () { var v = ta.value.trim(); if (!v) return; respond(s.sessionId, "text", v); ta.value = ""; toast("Sent to agent", "ok"); };
+      send.addEventListener("click", doSend);
+      ta.addEventListener("keydown", function (e) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doSend(); } });
+    }
+    $("ovAllow") && $("ovAllow").addEventListener("click", function () { respond(s.sessionId, "allow", ""); toast("Allowed", "ok"); });
+    $("ovDeny") && $("ovDeny").addEventListener("click", function () { respond(s.sessionId, "deny", ""); toast("Denied", ""); });
+    p.querySelectorAll("[data-key]").forEach(function (b) {
+      b.addEventListener("click", function () { var k = b.dataset.key; respond(s.sessionId, k === "interrupt" ? "interrupt" : "key", k === "interrupt" ? "" : k); });
+    });
+  }
+  function stat(k, v, wrap) { return '<div class="ov-stat"><div class="k">' + k + '</div><div class="v' + (wrap ? " wrap" : "") + '">' + v + "</div></div>"; }
+  // Claude's standard context window is ~200k tokens (1M is opt-in beta rook
+  // can't detect), so 200k is the honest denominator for the fill gauge.
+  function ctxLimit(model) { return 200000; }
+
+  function renderFiles() {
+    var p = $("wsFiles"); if (!p || p.dataset.done === selectedId) { if (p) p.dataset.done = selectedId; }
+    var s = findAgent(selectedId); if (!s || !p) return;
+    var files = s.changedFiles || [];
+    if (!files.length) { p.innerHTML = '<div class="op-empty">' + I.file + '<div class="t">No changed files</div></div>'; return; }
+    p.innerHTML = '<div class="ws-diff-mount"><div class="ov-sec-label">Files changed (' + files.length + ')</div><div class="ov-files">' +
+      files.map(function (f) { return '<button class="ov-file" data-f="' + esc(f) + '" title="' + esc(f) + '">' + esc(f.split("/").pop()) + "</button>"; }).join("") + "</div></div>";
+    p.querySelectorAll(".ov-file").forEach(function (b) { b.addEventListener("click", function () { switchTab("diff"); }); });
+  }
+
+  function renderTraceTab() {
+    var p = $("wsTrace"); if (!p) return;
+    var s = findAgent(selectedId); if (!s) return;
+    if (ws.traceLoaded && p.dataset.for === selectedId) return;
+    ws.traceLoaded = true; p.dataset.for = selectedId;
+    var calls = (s.toolCalls || []).map(function (t) { return { name: t.name, summary: t.summary, ts: new Date(t.timestamp).getTime() }; }).filter(function (c) { return !isNaN(c.ts); }).sort(function (a, b) { return a.ts - b.ts; });
+    if (calls.length < 2 || !window.rookCharts) { p.innerHTML = '<div class="op-empty">' + I.trace + '<div class="t">Not enough tool calls for a trace</div></div>'; return; }
+    var t0 = calls[0].ts, gaps = [];
+    for (var i = 0; i < calls.length - 1; i++) gaps.push(calls[i + 1].ts - calls[i].ts);
+    var sorted = gaps.slice().sort(function (a, b) { return a - b; }), median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 1000;
+    var spans = calls.map(function (c, i) { return { name: c.summary ? (c.name + " · " + c.summary).slice(0, 60) : c.name, type: c.name, startMs: c.ts - t0, durMs: i < calls.length - 1 ? calls[i + 1].ts - c.ts : median, depth: 0 }; });
+    p.innerHTML = '<div class="ws-trace-mount"><div class="ov-sec-label">Execution trace · ' + calls.length + ' spans</div><div id="wsTraceChart"></div></div>';
+    window.rookCharts.traceTimeline($("wsTraceChart"), { spans: spans });
+  }
+
+  async function loadDiff() {
+    var p = $("wsDiff"); if (!p) return;
+    var s = findAgent(selectedId); if (!s || !s.cwd) { p.innerHTML = '<div class="op-empty">' + I.diff + '<div class="t">No working directory</div></div>'; return; }
+    if (ws.diffLoaded && p.dataset.for === selectedId) return;
+    ws.diffLoaded = true; p.dataset.for = selectedId;
+    p.innerHTML = '<div class="ws-diff-mount"><div class="op-empty">Loading diff…</div></div>';
+    try {
+      var d = await (await fetch("/api/diff?path=" + encodeURIComponent(s.cwd), { cache: "no-store" })).json();
+      if (d.data) d = d.data;
+      p.innerHTML = "";
+      var mount = el("div"); p.appendChild(mount);
+      if (window.renderDiffV2) {
+        window.renderDiffV2(mount, d, { onSend: function (comments) {
+          if (!comments || !comments.length) return;
+          var msg = "Review comments:\n" + comments.map(function (c) { return "• " + (c.file || "") + ":" + (c.line || "?") + " — " + c.text; }).join("\n");
+          respond(s.sessionId, "text", msg); toast(comments.length + " comment(s) sent", "ok");
+        } });
+      } else { p.innerHTML = "<pre style='padding:16px;white-space:pre-wrap'>" + esc(d.patch || "") + "</pre>"; }
+    } catch (e) { p.innerHTML = '<div class="op-empty">' + I.alert + '<div class="t">Couldn\'t load diff</div></div>'; }
+  }
+
+  function openTermTab() {
+    var p = $("wsTerm"); if (!p) return;
+    var s = findAgent(selectedId); if (!s || !s.controllable || !s.tmuxPane) { p.innerHTML = '<div class="op-empty">' + I.terminal + '<div class="t">This agent has no attachable terminal</div></div>'; return; }
+    if (ws.term && ws.term.pane === s.tmuxPane) { setTimeout(fitTerm, 30); return; }
+    teardownTerm();
+    p.innerHTML = '<div class="ws-term-wrap"><div class="ws-term-bar">' + I.terminal + "<span>tmux · " + esc(s.tmuxPane) + "</span></div><div class=\"ws-term-host\" id=\"wsTermHost\"></div></div>";
+    if (typeof Terminal === "undefined") { p.innerHTML = '<div class="op-empty">terminal library not loaded</div>'; return; }
+    var host = $("wsTermHost");
+    var xt = new Terminal({ fontFamily: '"Geist Mono", ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.2, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: { background: "#08080a", foreground: "#e6e6ea", cursor: "#ff5c3a", selectionBackground: "rgba(255,92,58,.25)" } });
+    var fit = new FitAddon.FitAddon(); xt.loadAddon(fit); xt.open(host);
+    var rec = { pane: s.tmuxPane, xt: xt, fit: fit, host: host, ws: null };
+    ws.term = rec;
+    xt.onData(function (d) { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(d); });
+    rec.ro = new ResizeObserver(function () { if (ws.tab === "terminal") fitTerm(); }); rec.ro.observe(host);
+    connectTerm(rec);
+  }
+  function fitTerm() {
+    var r = ws.term; if (!r) return;
+    try {
+      r.fit.fit();
+      // backend control protocol is {"resize":[cols,rows]}; only send when the
+      // size actually changed to avoid a resize storm on every layout tick.
+      if (r.ws && r.ws.readyState === 1 && (r.xt.cols !== r._c || r.xt.rows !== r._r)) {
+        r._c = r.xt.cols; r._r = r.xt.rows;
+        r.ws.send(JSON.stringify({ resize: [r.xt.cols, r.xt.rows] }));
+      }
+    } catch (e) {}
+  }
+  function connectTerm(rec) {
+    try { rec.fit.fit(); } catch (e) {}
+    var proto = location.protocol === "https:" ? "wss" : "ws";
+    var url = proto + "://" + location.host + "/ws/term?target=" + encodeURIComponent(rec.pane) + "&cols=" + (rec.xt.cols || 120) + "&rows=" + (rec.xt.rows || 32);
+    var sock = new WebSocket(url); sock.binaryType = "arraybuffer"; rec.ws = sock;
+    sock.onopen = function () { setTimeout(fitTerm, 60); };
+    sock.onmessage = function (e) { rec.xt.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data)); };
+    sock.onclose = function () { try { rec.xt.write("\r\n\x1b[38;5;244m[detached]\x1b[0m\r\n"); } catch (e) {} };
+    sock.onerror = function () {};
+  }
+
+  // ---- insights view -------------------------------------------------------
+  function buildInsights() { var v = el("div", "ins"); v.id = "opInsights"; v.innerHTML = '<div class="op-empty">Loading…</div>'; return v; }
+  var insMetric = "messages"; // messages | tokens | toolCalls
+  var insTrends = [];
+  function compBar(w) {
+    var t = w.total || 1;
+    var seg = [["input", w.input, "--busy"], ["output", w.output, "--ok"], ["cache write", w.cacheWrite, "--waiting"], ["cache read", w.cacheRead, "--coral"]];
+    var bar = seg.map(function (s) { var pct = (s[1] || 0) / t * 100; return pct > 0.05 ? '<i style="width:' + pct.toFixed(2) + "%;background:var(" + s[2] + ')"></i>' : ""; }).join("");
+    var legend = seg.map(function (s) { return '<span><i style="background:var(' + s[2] + ')"></i>' + s[0] + " " + fmtTokens(s[1] || 0) + "</span>"; }).join("");
+    return '<div class="ins-comp">' + bar + '</div><div class="ins-comp-legend">' + legend + "</div>";
+  }
+  function renderInsTrend() {
+    if (!window.rookCharts || !$("insTrend")) return;
+    var isTok = insMetric === "tokens";
+    var fmt = isTok ? fmtTokens : function (v) { return Math.round(v).toLocaleString(); };
+    window.rookCharts.lineArea($("insTrend"), {
+      points: insTrends.map(function (t) { return { label: new Date(t.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: t[insMetric] || 0 }; }),
+      format: fmt
+    });
+  }
+  async function renderInsights() {
+    var host = $("opInsights"); if (!host) return;
+    var d = {}; try { d = await (await fetch("/api/usage", { cache: "no-store" })).json(); if (d.data) d = d.data; } catch (e) {}
+    var models = (d.models || []).filter(function (m) { return (m.tokensTotal || 0) > 0 || (m.costUsd || 0) > 0; });
+    var runs = d.runs || [], wins = d.windows || [];
+    insTrends = (state && state.trends) || [];
+    var TL = { messages: "Messages", tokens: "Tokens", toolCalls: "Tool calls" };
+    host.innerHTML =
+      '<div class="ins-windows">' + wins.map(function (w) {
+        return '<div class="ins-win"><div class="ins-win-label">' + esc(w.label) + '</div>' +
+          '<div class="ins-win-val">' + fmtTokens(w.total) + ' <span class="ins-win-unit">tokens</span></div>' +
+          '<div class="ins-win-sub">' + (w.messages || 0).toLocaleString() + " messages · " + fmtUSD(w.costUsd) + "</div>" +
+          compBar(w) +
+        "</div>";
+      }).join("") + "</div>" +
+      '<div style="height:16px"></div>' +
+      '<div class="ins-grid">' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by model</div><div class="ins-card-meta">' + fmtUSD(d.costUsd) + " · " + fmtTokens(d.tokensTotal) + '</div></div><div id="insModels"></div></div>' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Share</div></div><div id="insDonut"></div></div>' +
+        '<div class="ins-card wide"><div class="ins-card-head"><div class="ins-card-title">Activity · last 30 days</div>' +
+          '<div class="ins-toggle" id="insToggle">' + Object.keys(TL).map(function (k) { return '<button data-m="' + k + '" class="' + (k === insMetric ? "on" : "") + '">' + TL[k] + "</button>"; }).join("") + "</div>" +
+        '</div><div id="insTrend"></div></div>' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by project</div></div><div id="insProjects"></div></div>' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Top runs by cost</div><div class="ins-card-meta">' + runs.length + ' runs</div></div><div id="insRuns"></div></div>' +
+      "</div>";
+    // per-project cost, aggregated from the live session list (complete, not just top runs)
+    var byProj = {};
+    sessions().forEach(function (s) { var p = s.project || "—"; if (!byProj[p]) byProj[p] = { agents: 0, tok: 0, cost: 0 }; byProj[p].agents++; byProj[p].tok += s.tokensTotal || 0; byProj[p].cost += s.costUsd || 0; });
+    var projRows = Object.keys(byProj).map(function (p) { return { p: p, agents: byProj[p].agents, tok: byProj[p].tok, cost: byProj[p].cost }; })
+      .filter(function (r) { return r.tok > 0 || r.cost > 0; }).sort(function (a, b) { return b.cost - a.cost; });
+    var maxProjCost = Math.max.apply(null, projRows.map(function (r) { return r.cost; }).concat([0.0001]));
+    if ($("insProjects")) $("insProjects").innerHTML = projRows.length
+      ? '<table class="ins-mtable"><thead><tr><th>Project</th><th>Agents</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>' +
+        projRows.slice(0, 10).map(function (r) {
+          return "<tr><td class=mn>" + esc(r.p) + "</td><td class=n>" + r.agents + "</td><td class=n>" + fmtTokens(r.tok) + '</td><td class="n cost">' + fmtUSD(r.cost) + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="op-empty">No project cost yet</div>';
+    var perMtok = function (m) { var mt = (m.tokensTotal || 0) / 1e6; return mt > 0.0001 ? "$" + (m.costUsd / mt).toFixed(2) : "—"; };
+    $("insModels").innerHTML = models.length
+      ? '<table class="ins-mtable"><thead><tr><th>Model</th><th>Sessions</th><th>Tokens</th><th>$/M tok</th><th>Cost</th></tr></thead><tbody>' +
+        models.map(function (m) {
+          return "<tr><td class=mn>" + esc(shortModel(m.model) || "—") + "</td><td class=n>" + (m.sessions || 0) + "</td><td class=n>" + fmtTokens(m.tokensTotal) + "</td><td class=n>" + perMtok(m) + '</td><td class="n cost">' + fmtUSD(m.costUsd) + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="op-empty">No usage yet</div>';
+    $("insRuns").innerHTML = runs.length
+      ? '<table class="ins-rtable"><tbody>' + runs.slice(0, 15).map(function (r, i) {
+          return '<tr><td class="rk-num">' + (i + 1) + '</td><td class="rt">' + esc(r.title || r.project || r.sessionId) + '</td><td class="rm">' + esc(shortModel(r.model) || "") + '</td><td class="n">' + fmtTokens(r.tokensTotal) + '</td><td class="n cost">' + fmtUSD(r.costUsd) + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="op-empty">No runs</div>';
+    var tog = $("insToggle");
+    if (tog) tog.querySelectorAll("button").forEach(function (b) { b.addEventListener("click", function () { insMetric = b.dataset.m; tog.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); }); renderInsTrend(); }); });
+    if (window.rookCharts) {
+      window.rookCharts.donut($("insDonut"), { slices: models.map(function (m) { return { label: shortModel(m.model) || "—", value: m.costUsd || 0 }; }), format: fmtUSD });
+      renderInsTrend();
+    }
+  }
+
+  // ---- board view ----------------------------------------------------------
+  function buildBoardView() {
+    var v = el("div", "op-board-view");
+    v.innerHTML = '<div class="op-board-head"><h1>Board</h1><p>Every agent by its live state — click a card to open it, or act right from the card.</p></div><div id="opBoardMount"></div>';
+    return v;
+  }
+  var boardChains = [];
+  async function renderBoard() {
+    var mount = $("opBoardMount"); if (!mount) return;
+    try { boardChains = await (await fetch("/api/chains", { cache: "no-store" })).json(); if (boardChains && boardChains.data) boardChains = boardChains.data; } catch (e) { boardChains = []; }
+    if (!window.renderBoardV2) { mount.innerHTML = '<div class="op-empty">board module not loaded</div>'; return; }
+    window.renderBoardV2(mount, { sessions: sessions(), chains: boardChains || [] }, {
+      onOpen: function (id) { setView("operator"); selectAgent(id); },
+      onDiff: function (id) { setView("operator"); selectAgent(id); switchTab("diff"); },
+      onReview: function (id) { setView("operator"); selectAgent(id); switchTab("diff"); },
+      onTerminal: function (id) { setView("operator"); selectAgent(id); switchTab("terminal"); },
+      onAllow: function (id) { respond(id, "allow", ""); },
+      onDeny: function (id) { respond(id, "deny", ""); },
+      onNewTask: createChain, onMove: function () {}
+    });
+  }
+
+  // ---- settings (real form over /api/config + hooks) -----------------------
+  function buildSettings(host) {
+    var v = el("div", "ins"); v.id = "opSettings";
+    v.innerHTML = '<div class="op-empty">Loading settings…</div>';
+    host.appendChild(v);
+    loadSettings();
+  }
+  async function loadSettings() {
+    var host = $("opSettings"); if (!host) return;
+    var cfg = {}, hooks = {};
+    try { cfg = await (await fetch("/api/config", { cache: "no-store" })).json(); if (cfg.data) cfg = cfg.data; } catch (e) {}
+    try { hooks = await (await fetch("/api/hooks/status", { cache: "no-store" })).json(); if (hooks.data) hooks = hooks.data; } catch (e) {}
+    var field = function (label, id, val, ph, type) { return '<label class="set-field"><span class="set-k">' + esc(label) + '</span><input class="set-in" id="set_' + id + '" type="' + (type || "text") + '" value="' + esc(val == null ? "" : val) + '" placeholder="' + esc(ph || "") + '" /></label>'; };
+    var toggle = function (label, id, on, hint) { return '<label class="set-toggle"><input type="checkbox" id="set_' + id + '" ' + (on ? "checked" : "") + ' /><span><b>' + esc(label) + "</b>" + (hint ? '<span class="set-hint">' + esc(hint) + "</span>" : "") + "</span></label>"; };
+    var selectField = function (label, id, val, opts) { return '<label class="set-field"><span class="set-k">' + esc(label) + '</span><select class="set-in" id="set_' + id + '">' + opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select></label>"; };
+    var chip = function (on, name) { return '<span class="pill ' + (on ? "ok" : "idle") + '" style="margin-left:6px">' + esc(name) + "</span>"; };
+    host.innerHTML =
+      '<div class="ins-grid" style="grid-template-columns:1fr 1fr">' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Automation</div></div>' +
+          toggle("Destructive-command gate", "hooksGate", cfg.hooksGate, "block clearly-dangerous commands via the PreToolUse hook") +
+          toggle("Auto-review on finish", "autoReview", cfg.autoReview, "spawn a review subagent when a session ends with changes") +
+          toggle("Auto-verify (build/test) on finish", "autoVerify", cfg.autoVerify, "run the project's test/build command when a session ends") +
+          toggle("Allow write actions", "allowWrite", cfg.allowWrite, "enable PR create/merge to GitHub") +
+          field("Max reflect iterations", "maxReflectIterations", cfg.maxReflectIterations || "", "3", "number") +
+        "</div>" +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Claude Code hooks</div><div class="ins-card-meta">' + (hooks.installed ? '<span class="pill ok">installed</span>' : '<span class="pill dead">not installed</span>') + "</div></div>" +
+          '<div class="set-hint mono" style="margin-bottom:10px;word-break:break-all">' + esc(hooks.settingsPath || "") + "</div>" +
+          '<div class="ov-sec-label">Recent events (' + (hooks.events || 0) + ")</div>" +
+          '<div style="display:flex;gap:8px;margin-top:10px">' +
+            (hooks.installed ? '<button class="btn sm danger" id="setHookUninstall">Uninstall</button>' : '<button class="btn sm primary" id="setHookInstall">Install hooks</button>') +
+          "</div>" +
+        "</div>" +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Notifications & editor</div><div class="ins-card-meta">' + chip(!!cfg.slackWebhook, "Slack") + chip(!!cfg.discordWebhook, "Discord") + chip(!!cfg.ntfy, "ntfy") + "</div></div>" +
+          field("ntfy topic URL", "ntfy", cfg.ntfy, "https://ntfy.sh/your-topic") +
+          field("Slack webhook", "slackWebhook", cfg.slackWebhook, "https://hooks.slack.com/…") +
+          field("Discord webhook", "discordWebhook", cfg.discordWebhook, "https://discord.com/api/webhooks/…") +
+          selectField("Open worktrees in", "editor", cfg.editor || "code", ["code", "cursor", "idea", "zed", "subl"]) +
+          '<div style="margin-top:8px"><button class="btn sm" id="setNotifTest">' + I.send + "Send test notification</button></div>" +
+        "</div>" +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Trackers & summaries</div><div class="ins-card-meta">' + chip(!!cfg.linearToken, "Linear") + chip(!!(cfg.jiraToken && cfg.jiraBase), "Jira") + "</div></div>" +
+          field("Linear token", "linearToken", cfg.linearToken, "lin_api_…") +
+          field("Jira base URL", "jiraBase", cfg.jiraBase, "https://acme.atlassian.net") +
+          field("Jira email", "jiraEmail", cfg.jiraEmail, "") +
+          field("Jira token", "jiraToken", cfg.jiraToken, "") +
+          field("Summary author (GitHub)", "summaryAuthor", cfg.summaryAuthor, "") +
+          field("Summary repos", "summaryRepos", cfg.summaryRepos, "org/repo, org/repo2") +
+          field("Summary schedule", "summarySchedule", cfg.summarySchedule, "HH:MM local, empty = off") +
+        "</div>" +
+      "</div>" +
+      '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="btn primary" id="setSave">' + I.check + 'Save settings</button><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span></div>';
+    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
+    $("setSave").addEventListener("click", async function () {
+      var out = {};
+      Object.keys(cfgKeys).forEach(function (k) {
+        var elm = $("set_" + k); if (!elm) { out[k] = cfg[k]; return; }
+        if (elm.type === "checkbox") out[k] = elm.checked;
+        else if (elm.type === "number") out[k] = parseInt(elm.value, 10) || 0;
+        else out[k] = elm.value;
+      });
+      try { await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(out) }); $("setSaved").textContent = "saved ✓"; setTimeout(function () { $("setSaved").textContent = ""; }, 2500); toast("Settings saved", "ok"); }
+      catch (e) { toast("Save failed", "err"); }
+    });
+    $("setNotifTest") && $("setNotifTest").addEventListener("click", async function () {
+      try { var r = await fetch("/api/webhook/test", { method: "POST" }); var d = await r.json().catch(function () { return {}; }); if (d.data) d = d.data; if (!r.ok) { toast((d && ((d.error && (d.error.message || d.error)) || d.message)) || "Configure a Slack or Discord webhook first", "err"); return; } toast("Test sent — check Slack/Discord", "ok"); }
+      catch (e) { toast("Test failed", "err"); }
+    });
+    $("setHookInstall") && $("setHookInstall").addEventListener("click", async function () { try { await fetch("/api/hooks/install", { method: "POST" }); toast("Hooks installed", "ok"); loadSettings(); } catch (e) { toast("Install failed", "err"); } });
+    $("setHookUninstall") && $("setHookUninstall").addEventListener("click", async function () { if (!confirm("Uninstall rook hooks from ~/.claude/settings.json?")) return; try { await fetch("/api/hooks/uninstall", { method: "POST" }); toast("Hooks uninstalled", ""); loadSettings(); } catch (e) { toast("Uninstall failed", "err"); } });
+  }
+
+  // ---- actions -------------------------------------------------------------
+  async function respond(id, action, value) {
+    try { await fetch("/api/respond", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id, action: action, value: value }) }); }
+    catch (e) { toast("Action failed", "err"); }
+  }
+  async function killAgent(s) {
+    try { await fetch("/api/kill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId, target: s.tmuxPane }) }); toast("Agent stopped", ""); }
+    catch (e) { toast("Stop failed", "err"); }
+  }
+  async function createPR(s) {
+    // zero-friction: title + body auto-filled from the branch's commits (gh --fill)
+    if (!confirm("Open a pull request from this agent's branch?\nTitle and description are filled in automatically from the commits.")) return;
+    toast("Creating PR…", "");
+    try {
+      var r = await fetch("/api/pr/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: s.cwd }) });
+      var d = await r.json(); if (d.data) d = d.data;
+      if (!r.ok) { toast((d && ((d.error && (d.error.message || d.error)) || d.message)) || "PR failed — enable Allow write actions in Settings", "err"); return; }
+      toast("PR created", "ok"); if (d.url) window.open(d.url, "_blank");
+    } catch (e) { toast("PR failed", "err"); }
+  }
+
+  // ---- modal + launch/chain -----------------------------------------------
+  function modal(title, bodyHTML, onMount) {
+    var ov = el("div", "op-modal-ov");
+    ov.innerHTML = '<div class="op-modal"><div class="op-modal-head"><b>' + esc(title) + '</b><button class="op-modal-x">' + I.x + '</button></div><div class="op-modal-body">' + bodyHTML + "</div></div>";
+    document.body.appendChild(ov);
+    var close = function () { ov.remove(); };
+    ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    ov.querySelector(".op-modal-x").addEventListener("click", close);
+    onMount && onMount(ov, close);
+    return ov;
+  }
+  function newAgent(prefill) {
+    prefill = prefill || {};
+    modal(prefill.title || "Launch agent",
+      '<label class="set-field"><span class="set-k">Task name</span><input class="set-in" id="sp_name" placeholder="fix-auth-bug" value="' + esc(prefill.name || "") + '" /></label>' +
+      '<label class="set-field"><span class="set-k">Working directory' + (prefill.cwd ? ' <span class="set-hint" style="color:var(--ok)">auto-detected</span>' : "") + '</span><input class="set-in" id="sp_cwd" list="spRepoDL" placeholder="start typing a repo name…" value="' + esc(prefill.cwd || "") + '" />' + repoDatalist("spRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Agent</span><select class="set-in" id="sp_agent"><option value="claude">claude</option><option value="codex">codex (beta)</option><option value="aider">aider (beta)</option><option value="gemini">gemini (beta)</option></select></label>' +
+      '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
+      '<label class="set-toggle"><input type="checkbox" id="sp_wt" ' + (prefill.worktree ? "checked" : "") + ' /><span><b>Isolate in a git worktree</b><span class="set-hint">don\'t touch your working checkout</span></span></label>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
+      function (ov, close) {
+        if (prefill.cwd) $("sp_prompt").focus(); else $("sp_cwd").focus();
+        $("sp_go").addEventListener("click", async function () {
+          var cwd = $("sp_cwd").value;
+          if (!cwd) { toast("Working directory required", "err"); return; }
+          // auto-name if blank: derive from the repo folder so the user needn't type one
+          var name = $("sp_name").value.trim();
+          if (!name) name = (cwd.replace(/\/+$/, "").split("/").pop() || "agent") + "-" + Date.now().toString(36).slice(-4);
+          name = name.replace(/[^A-Za-z0-9._-]+/g, "-");
+          var body = { name: name, cwd: cwd, agent: $("sp_agent").value, prompt: $("sp_prompt").value, worktree: $("sp_wt").checked };
+          try { var r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); var d = await r.json(); if (d.data) d = d.data; if (!r.ok) { toast(d.error || d.message || "Launch failed", "err"); return; } toast("Agent launched", "ok"); close(); setTimeout(poll, 400); }
+          catch (e) { toast("Launch failed", "err"); }
+        });
+      });
+  }
+  function createChain() {
+    modal("New task chain",
+      '<label class="set-field"><span class="set-k">Chain title</span><input class="set-in" id="ch_title" placeholder="ship feature X" /></label>' +
+      '<label class="set-field"><span class="set-k">Working directory</span><input class="set-in" id="ch_cwd" list="chRepoDL" placeholder="start typing a repo name…" />' + repoDatalist("chRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Steps (one per line — each becomes a sequential agent)</span><textarea class="set-in" id="ch_steps" rows="5" placeholder="write failing tests\nimplement\nrun lint + fix"></textarea></label>' +
+      '<label class="set-toggle"><input type="checkbox" id="ch_wt" checked /><span><b>Isolate in a git worktree</b></span></label>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="ch_go">' + I.plus + "Create chain</button></div>",
+      function (ov, close) {
+        $("ch_go").addEventListener("click", async function () {
+          var cwd = $("ch_cwd").value, steps = $("ch_steps").value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean).map(function (l, i) { return { name: "step" + (i + 1), prompt: l }; });
+          if (!cwd || !steps.length) { toast("cwd and at least one step required", "err"); return; }
+          try { var r = await fetch("/api/chain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("ch_title").value, cwd: cwd, worktree: $("ch_wt").checked, steps: steps }) }); if (!r.ok) throw 0; toast("Chain created", "ok"); close(); renderBoard(); }
+          catch (e) { toast("Chain create failed", "err"); }
+        });
+      });
+  }
+  // launch an agent straight from a Linear/Jira/GitHub ticket — rook fetches the
+  // ticket and builds the task prompt, so you paste an id, not write a brief.
+  function newFromTicket() {
+    modal("New agent from a ticket",
+      '<label class="set-field"><span class="set-k">Source</span><select class="set-in" id="tk_src"><option value="github">GitHub issue</option><option value="linear">Linear</option><option value="jira">Jira</option></select></label>' +
+      '<label class="set-field"><span class="set-k">Ticket</span><input class="set-in" id="tk_id" placeholder="owner/repo#123  ·  LIN-456  ·  PROJ-789" /></label>' +
+      '<div class="set-hint">rook pulls the title + description and turns it into the agent\'s task.</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="tk_go">' + I.plus + "Fetch &amp; launch</button></div>",
+      function (ov, close) {
+        $("tk_id").focus();
+        $("tk_go").addEventListener("click", async function () {
+          var src = $("tk_src").value, id = $("tk_id").value.trim();
+          if (!id) { toast("Enter a ticket id", "err"); return; }
+          toast("Fetching " + src + " " + id + "…", "");
+          try {
+            var r = await fetch("/api/tracker/fetch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: src, id: id }) });
+            var d = await r.json(); if (d.data) d = d.data;
+            if (!r.ok) { toast((d && ((d.error && (d.error.message || d.error)) || d.message)) || "Couldn't fetch ticket", "err"); return; }
+            close();
+            var cwd = ""; var m = id.match(/^([\w.-]+\/[\w.-]+)#\d+/); if (m) cwd = resolveRepoPath(m[1]);
+            newAgent({ title: "Launch from " + id, name: d.name, prompt: d.prompt, worktree: true, cwd: cwd });
+          } catch (e) { toast("Couldn't fetch ticket", "err"); }
+        });
+      });
+  }
+
+  function toast(msg, kind) {
+    var host = $("opToasts"); if (!host) return;
+    var t = el("div", "op-toast " + (kind || ""), (kind === "ok" ? I.review : kind === "err" ? I.alert : "") + "<span>" + esc(msg) + "</span>");
+    host.appendChild(t); setTimeout(function () { t.style.opacity = "0"; setTimeout(function () { t.remove(); }, 200); }, 2600);
+  }
+
+  // ---- command palette -----------------------------------------------------
+  var paletteOpen = false, palQuery = "", palItems = [], palIdx = 0;
+  function openPalette() { paletteOpen = true; $("opPalette").hidden = false; palQuery = ""; palIdx = 0; var i = $("palInput"); i.value = ""; i.focus(); renderPaletteList(); }
+  function closePalette() { paletteOpen = false; $("opPalette").hidden = true; }
+  function paletteCommands() {
+    return [
+      { g: "Action", title: "Launch agent…", sub: "start a new agent", run: newAgent },
+      { g: "Action", title: "New agent from a ticket…", sub: "Linear / Jira / GitHub issue", run: newFromTicket },
+      { g: "Action", title: "New task chain…", sub: "sequential agents", run: createChain },
+      { g: "Go", title: "Operator", sub: "workspace console", key: "G O", run: function () { setView("operator"); } },
+      { g: "Go", title: "Insights", sub: "usage · cost · trends", key: "G I", run: function () { setView("insights"); } },
+      { g: "Go", title: "Board", sub: "kanban by state", key: "G B", run: function () { setView("board"); } },
+      { g: "Go", title: "GitHub", sub: "repos · issues · PRs", run: function () { setView("github"); } },
+      { g: "Go", title: "Summaries", sub: "saved work summaries", run: function () { setView("summaries"); } },
+      { g: "Go", title: "Dev servers", sub: "running dev servers", run: function () { setView("dev"); } },
+      { g: "Go", title: "Audit", sub: "command trail", run: function () { setView("audit"); } },
+      { g: "Go", title: "Workspace", sub: "worktrees · hooks", run: function () { setView("workspace"); } },
+      { g: "Go", title: "Settings", sub: "config · hooks · integrations", run: function () { setView("settings"); } }
+    ];
+  }
+  function renderPaletteList() {
+    var q = palQuery.toLowerCase();
+    var agents = sessions().map(function (s) { return { g: "Agents", title: s.title || s.project || "session", sub: esc(s.project || "") + " · " + statusOf(s), st: statusOf(s), run: function () { setView("operator"); selectAgent(s.sessionId); }, _s: ((s.title || "") + " " + (s.project || "")).toLowerCase() }; });
+    var cmds = paletteCommands().map(function (c) { c._s = (c.title + " " + c.sub).toLowerCase(); return c; });
+    var all = cmds.concat(agents).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
+    palItems = all; if (palIdx >= all.length) palIdx = Math.max(0, all.length - 1);
+    var list = $("palList"), html = "", lastG = null;
+    all.forEach(function (it, i) {
+      if (it.g !== lastG) { html += '<div class="pal-group">' + esc(it.g) + "</div>"; lastG = it.g; }
+      html += '<div class="pal-item ' + (i === palIdx ? "act" : "") + '" data-i="' + i + '">' +
+        (it.st ? '<i class="dot ' + it.st + ' pi-dot"></i>' : (it.g === "Go" ? I.grid : I.send)) +
+        '<span class="pi-main"><span class="pi-title">' + esc(it.title) + '</span>' + (it.sub ? '<span class="pi-sub">' + esc(it.sub) + "</span>" : "") + "</span>" +
+        (it.key ? '<span class="pi-key">' + esc(it.key) + "</span>" : "") + "</div>";
+    });
+    list.innerHTML = html || '<div class="op-empty" style="padding:30px">No matches</div>';
+    list.querySelectorAll(".pal-item").forEach(function (n) { n.addEventListener("click", function () { runPalette(parseInt(n.dataset.i, 10)); }); });
+  }
+  function runPalette(i) { var it = palItems[i]; if (!it) return; closePalette(); it.run(); }
+
+  // ---- keyboard ------------------------------------------------------------
+  var gPending = false;
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); paletteOpen ? closePalette() : openPalette(); return; }
+    if (paletteOpen) {
+      if (e.key === "Escape") { closePalette(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); palIdx = Math.min(palItems.length - 1, palIdx + 1); renderPaletteList(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); palIdx = Math.max(0, palIdx - 1); renderPaletteList(); }
+      else if (e.key === "Enter") { e.preventDefault(); runPalette(palIdx); }
+      return;
+    }
+    var typing = /^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || "");
+    if (typing) return;
+    if (e.key === "/") { e.preventDefault(); var s = $("opRosterSearch"); s && s.focus(); return; }
+    if (e.key === "g" || e.key === "G") { gPending = true; setTimeout(function () { gPending = false; }, 600); return; }
+    if (gPending) { gPending = false; if (e.key === "o") setView("operator"); else if (e.key === "i") setView("insights"); else if (e.key === "b") setView("board"); return; }
+    if (activeView === "operator" && (e.key === "j" || e.key === "k" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault(); moveSelection(e.key === "j" || e.key === "ArrowDown" ? 1 : -1); return;
+    }
+    if (e.key >= "1" && e.key <= "5" && activeView === "operator" && ws.id) { switchTab(TABS[parseInt(e.key, 10) - 1][0]); }
+  });
+  function moveSelection(dir) {
+    var rows = [].slice.call(document.querySelectorAll(".op-agent")).map(function (b) { return b.dataset.id; });
+    var i = rows.indexOf(selectedId); i = Math.max(0, Math.min(rows.length - 1, i + dir));
+    if (rows[i]) { selectAgent(rows[i]); var b = document.querySelector('.op-agent[data-id="' + rows[i] + '"]'); b && b.scrollIntoView({ block: "nearest" }); }
+  }
+
+  // ---- boot ----------------------------------------------------------------
+  // ---- theme (dark default, persisted; terminal stays dark by design) ------
+  var SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  var MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  function currentTheme() { return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("opTheme", t); } catch (e) {}
+    var ic = $("opThemeIcon"); if (ic) ic.innerHTML = t === "light" ? MOON : SUN; // show the mode you'd switch TO
+    var btn = $("opTheme"); if (btn) btn.setAttribute("data-tip", t === "light" ? "Switch to dark" : "Switch to light");
+  }
+  function boot() {
+    document.querySelectorAll(".op-rail-btn[data-view]").forEach(function (b) { b.addEventListener("click", function () { setView(b.dataset.view); }); });
+    applyTheme(currentTheme());
+    $("opTheme") && $("opTheme").addEventListener("click", function () { applyTheme(currentTheme() === "light" ? "dark" : "light"); });
+    $("opCmd") && $("opCmd").addEventListener("click", openPalette);
+    $("palInput") && $("palInput").addEventListener("input", function (e) { palQuery = e.target.value; palIdx = 0; renderPaletteList(); });
+    $("opPalette") && $("opPalette").addEventListener("click", function (e) { if (e.target === $("opPalette")) closePalette(); });
+    fetchRepos();
+    setView(activeView);
+    poll(); setInterval(poll, POLL_MS);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
+})();
