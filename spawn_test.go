@@ -93,3 +93,40 @@ func TestSendInitialPrompt_WaitsForBoot(t *testing.T) {
 		t.Errorf("prompt not delivered after boot settle; pane:\n%s", out)
 	}
 }
+
+func TestBuildLaunchCmd(t *testing.T) {
+	valid := "cbcd2e95-f25a-4cd5-8baf-b9dae38e8496"
+	cases := []struct {
+		name, agent, resume, model, want string
+		wantErr                          bool
+	}{
+		{name: "plain claude", agent: "claude", want: "claude"},
+		{name: "default agent", agent: "", want: "claude"},
+		{name: "codex", agent: "codex", want: "codex"},
+		{name: "model alias", agent: "claude", model: "haiku", want: "claude --model haiku"},
+		{name: "model default is no flag", agent: "claude", model: "default", want: "claude"},
+		{name: "full model id", agent: "claude", model: "claude-haiku-4-5-20251001", want: "claude --model claude-haiku-4-5-20251001"},
+		{name: "resume", agent: "claude", resume: valid, want: "claude --resume " + valid},
+		{name: "resume + model", agent: "claude", resume: valid, model: "sonnet", want: "claude --resume " + valid + " --model sonnet"},
+		{name: "bad model", agent: "claude", model: "gpt-4; rm -rf", wantErr: true},
+		{name: "bad resume id", agent: "claude", resume: "not a uuid!", wantErr: true},
+		{name: "resume non-claude", agent: "codex", resume: valid, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildLaunchCmd(tc.agent, tc.resume, tc.model)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -16,6 +16,7 @@ type Config struct {
 	SummaryRepos    string `json:"summaryRepos"`    // default repos (comma-separated)
 	SummaryCwd      string `json:"summaryCwd"`      // working dir the summary agent runs in
 	SummarySchedule string `json:"summarySchedule"` // "HH:MM" local time for auto-run; empty = off
+	SummaryModel    string `json:"summaryModel"`    // model for the (low-stakes) summary agent; empty = cheap default (haiku)
 	HooksGate       bool   `json:"hooksGate"`       // PreToolUse gate: block clearly-destructive commands
 	AutoReview      bool   `json:"autoReview"`      // spawn a review subagent when a session finishes with changes
 	AutoVerify      bool   `json:"autoVerify"`      // run the project's build/test command when a session finishes

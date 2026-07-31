@@ -778,10 +778,11 @@
           field("Summary author (GitHub)", "summaryAuthor", cfg.summaryAuthor, "") +
           field("Summary repos", "summaryRepos", cfg.summaryRepos, "org/repo, org/repo2") +
           field("Summary schedule", "summarySchedule", cfg.summarySchedule, "HH:MM local, empty = off") +
+          selectField("Summary model", "summaryModel", cfg.summaryModel || "haiku", ["haiku", "sonnet", "opus"]) +
         "</div>" +
       "</div>" +
       '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="btn primary" id="setSave">' + I.check + 'Save settings</button><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span></div>';
-    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
+    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
     $("setSave").addEventListener("click", async function () {
       var out = {};
       Object.keys(cfgKeys).forEach(function (k) {
@@ -839,6 +840,7 @@
       '<label class="set-field"><span class="set-k">Task name</span><input class="set-in" id="sp_name" placeholder="fix-auth-bug" value="' + esc(prefill.name || "") + '" /></label>' +
       '<label class="set-field"><span class="set-k">Working directory' + (prefill.cwd ? ' <span class="set-hint" style="color:var(--ok)">auto-detected</span>' : "") + '</span><input class="set-in" id="sp_cwd" list="spRepoDL" placeholder="start typing a repo name…" value="' + esc(prefill.cwd || "") + '" />' + repoDatalist("spRepoDL") + "</label>" +
       '<label class="set-field"><span class="set-k">Agent</span><select class="set-in" id="sp_agent"><option value="claude">claude</option><option value="codex">codex (beta)</option><option value="aider">aider (beta)</option><option value="gemini">gemini (beta)</option></select></label>' +
+      '<label class="set-field"><span class="set-k">Model</span><select class="set-in" id="sp_model"><option value="default">Default (account)</option><option value="haiku">Haiku — cheapest</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label>' +
       '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
       '<label class="set-toggle"><input type="checkbox" id="sp_wt" ' + (prefill.worktree ? "checked" : "") + ' /><span><b>Isolate in a git worktree</b><span class="set-hint">don\'t touch your working checkout</span></span></label>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
@@ -851,7 +853,7 @@
           var name = $("sp_name").value.trim();
           if (!name) name = (cwd.replace(/\/+$/, "").split("/").pop() || "agent") + "-" + Date.now().toString(36).slice(-4);
           name = name.replace(/[^A-Za-z0-9._-]+/g, "-");
-          var body = { name: name, cwd: cwd, agent: $("sp_agent").value, prompt: $("sp_prompt").value, worktree: $("sp_wt").checked };
+          var body = { name: name, cwd: cwd, agent: $("sp_agent").value, model: $("sp_model").value, prompt: $("sp_prompt").value, worktree: $("sp_wt").checked };
           try {
             var r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             var d = await r.json(); if (d.data) d = d.data;

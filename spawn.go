@@ -41,6 +41,42 @@ func agentCmd(agent string) string {
 	}
 }
 
+// modelRe matches a full Claude model id (e.g. claude-haiku-4-5-20251001).
+var modelRe = regexp.MustCompile(`^claude-[a-z0-9]+(-[a-z0-9.]+)*$`)
+
+// validModel accepts the CLI's short aliases or a full claude-* id.
+func validModel(m string) bool {
+	switch m {
+	case "haiku", "sonnet", "opus":
+		return true
+	}
+	return modelRe.MatchString(m)
+}
+
+// buildLaunchCmd composes the shell command tmux runs for an agent, layering on
+// --resume (restore a session) and --model (route to a cheaper/stronger model)
+// when requested. Pure + validated so it can be unit-tested without tmux.
+func buildLaunchCmd(agent, resume, model string) (string, error) {
+	cmd := agentCmd(agent)
+	launch := cmd
+	if resume != "" {
+		if !validSessionID(resume) {
+			return "", fmt.Errorf("invalid resume session id")
+		}
+		if agent != "" && agent != "claude" {
+			return "", fmt.Errorf("resume is only supported for Claude sessions")
+		}
+		launch = cmd + " --resume " + resume
+	}
+	if model != "" && model != "default" {
+		if !validModel(model) {
+			return "", fmt.Errorf("invalid model %q", model)
+		}
+		launch += " --model " + model
+	}
+	return launch, nil
+}
+
 type spawnReq struct {
 	Name     string `json:"name"`
 	CWD      string `json:"cwd"`
@@ -48,6 +84,7 @@ type spawnReq struct {
 	Prompt   string `json:"prompt"`
 	Worktree bool   `json:"worktree"` // isolate in a git worktree (don't touch the user's checkout)
 	Resume   string `json:"resume"`   // Claude session id to resume (restores full context; claude only)
+	Model    string `json:"model"`    // override model (haiku|sonnet|opus|claude-* id); "" or "default" = account default
 }
 
 // gitToplevel returns the repo root for a directory, or "" if not a git repo.
@@ -109,19 +146,12 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 		return "", "", http.StatusBadRequest, fmt.Errorf("cwd is not a directory")
 	}
 	cmd := agentCmd(req.Agent)
-
-	// Resume restores an existing session's full context/history in place (same
-	// session id). Only Claude supports it; the initial prompt is skipped because
-	// the conversation is picked up where it left off.
-	launch := cmd
-	if req.Resume != "" {
-		if !validSessionID(req.Resume) {
-			return "", "", http.StatusBadRequest, fmt.Errorf("invalid resume session id")
-		}
-		if req.Agent != "" && req.Agent != "claude" {
-			return "", "", http.StatusBadRequest, fmt.Errorf("resume is only supported for Claude sessions")
-		}
-		launch = cmd + " --resume " + req.Resume
+	// launch layers --resume / --model onto the base agent command (see
+	// buildLaunchCmd). Resume restores a session in place; the initial prompt is
+	// skipped because the conversation is picked up where it left off.
+	launch, lerr := buildLaunchCmd(req.Agent, req.Resume, req.Model)
+	if lerr != nil {
+		return "", "", http.StatusBadRequest, lerr
 	}
 
 	// Isolate in a git worktree so the agent can `gh pr checkout` / branch without

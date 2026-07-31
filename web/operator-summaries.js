@@ -182,8 +182,8 @@
       ".op-sum-fld { display: flex; flex-direction: column; gap: 5px; }" +
       ".op-sum-fld > span { font-size: 11px; color: var(--ink-3); font-weight: 500; letter-spacing: .02em; }" +
       ".op-sum-fld > span em { color: var(--ink-4); font-style: normal; font-weight: 400; }" +
-      ".op-sum-fld input { height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 13px; font-family: var(--sans); outline: none; }" +
-      ".op-sum-fld input:focus { border-color: var(--coral-line); }" +
+      ".op-sum-fld input, .op-sum-fld select { height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 13px; font-family: var(--sans); outline: none; }" +
+      ".op-sum-fld input:focus, .op-sum-fld select:focus { border-color: var(--coral-line); }" +
       ".op-sum-modal-note { font-size: 11px; color: var(--ink-4); line-height: 1.5; }" +
       ".op-sum-modal-note.err { color: var(--danger); }" +
       ".op-sum-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }" +
@@ -499,6 +499,7 @@
         "<label class='op-sum-fld'><span>Day</span><input id='genDate' type='date' value='" + today + "'></label>" +
         "<label class='op-sum-fld'><span>GitHub author</span><input id='genAuthor' type='text' placeholder='your-github-username' autocomplete='off' spellcheck='false'></label>" +
         "<label class='op-sum-fld'><span>Repos <em>(optional, comma-separated)</em></span><input id='genRepos' type='text' placeholder='owner/repo, owner/repo2' autocomplete='off' spellcheck='false'></label>" +
+        "<label class='op-sum-fld'><span>Model <em>(Haiku is cheaper for this)</em></span><select id='genModel'><option value='haiku'>Haiku — cheapest</option><option value='sonnet'>Sonnet</option><option value='opus'>Opus — priciest</option></select></label>" +
         "<div class='op-sum-modal-note' id='genNote'>An agent spawns in a local repo, gathers the day's work, and saves the summary here when done.</div>" +
         "<div class='op-sum-modal-actions'>" +
           "<button class='btn sm' id='genCancel'>Cancel</button>" +
@@ -509,16 +510,18 @@
     var dateEl = overlay.querySelector("#genDate");
     var authEl = overlay.querySelector("#genAuthor");
     var repoEl = overlay.querySelector("#genRepos");
+    var modelEl = overlay.querySelector("#genModel");
     var note = overlay.querySelector("#genNote");
     var goBtn = overlay.querySelector("#genGo");
 
-    // prefill author + repos from saved config
+    // prefill author + repos + model from saved config
     fetch("/api/config", { cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (r) {
         var c = unwrap(r) || {};
         if (!authEl.value) authEl.value = c.summaryAuthor || "";
         if (!repoEl.value) repoEl.value = c.summaryRepos || "";
+        if (c.summaryModel && modelEl.querySelector("option[value='" + c.summaryModel + "']")) modelEl.value = c.summaryModel;
       })
       .catch(function () {});
 
@@ -545,7 +548,7 @@
       fetch("/api/summary/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: dateEl.value, author: author, repos: repoEl.value.trim() })
+        body: JSON.stringify({ date: dateEl.value, author: author, repos: repoEl.value.trim(), model: modelEl.value })
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: unwrap(j) }; }); })
         .then(function (res) {

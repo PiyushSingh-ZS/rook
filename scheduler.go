@@ -69,24 +69,32 @@ func runScheduledSummary(c Config, origin, date string) {
 		return
 	}
 	name := "summary-auto-" + strings.ReplaceAll(date, "-", "")
-	if _, err := spawnSummary(c, origin, date, date, c.SummaryAuthor, c.SummaryRepos, c.SummaryCwd, name); err != nil {
+	if _, err := spawnSummary(c, origin, date, date, c.SummaryAuthor, c.SummaryRepos, c.SummaryCwd, summaryModel(c, ""), name); err != nil {
 		log.Printf("scheduled summary failed: %v", err)
 		return
 	}
 	log.Printf("scheduled summary spawned for %s", date)
 }
 
+// summaryModel picks the model for the summary agent: an explicit override, else
+// the configured SummaryModel, else a cheap default. The summary is low-stakes
+// synthesis, so routing it to Haiku by default keeps rook's background work cheap
+// without touching quality-sensitive work (review/verify stay on the strong model).
+func summaryModel(c Config, override string) string {
+	return firstNonEmpty(override, c.SummaryModel, "haiku")
+}
+
 // spawnSummary launches a Claude agent that assembles a work summary for the
 // window and POSTs it back to /api/summary. Shared by the scheduler and the
 // manual "Generate summary" trigger.
-func spawnSummary(c Config, origin, start, end, author, repos, cwd, name string) (string, error) {
+func spawnSummary(c Config, origin, start, end, author, repos, cwd, model, name string) (string, error) {
 	if cwd == "" {
 		return "", fmt.Errorf("no working directory available to run the summary agent")
 	}
 	// kill any leftover session with this name so new-session doesn't collide
 	_, _ = runTmux("kill-session", "-t", name)
 	prompt := buildSummaryPrompt(start, end, author, repos, origin)
-	_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: cwd, Agent: "claude", Prompt: prompt})
+	_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: cwd, Agent: "claude", Prompt: prompt, Model: model})
 	if err != nil {
 		return "", err
 	}
@@ -109,6 +117,7 @@ type summaryGenReq struct {
 	Author string `json:"author"`
 	Repos  string `json:"repos"`
 	Cwd    string `json:"cwd"`
+	Model  string `json:"model"`
 }
 
 // handleSummaryGenerate is the manual trigger for a work summary. It defaults
@@ -133,7 +142,7 @@ func handleSummaryGenerate(ctx *gofr.Context) (any, error) {
 	}
 	cwd := firstNonEmpty(req.Cwd, c.SummaryCwd, defaultSummaryCwd())
 	name := "summary-" + strings.ReplaceAll(date, "-", "") + "-" + fmt.Sprint(time.Now().Unix()%100000)
-	session, err := spawnSummary(c, summaryOrigin, date, date, author, repos, cwd, name)
+	session, err := spawnSummary(c, summaryOrigin, date, date, author, repos, cwd, summaryModel(c, req.Model), name)
 	if err != nil {
 		return nil, errf(http.StatusBadGateway, "%v", err)
 	}
