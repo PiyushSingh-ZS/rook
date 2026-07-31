@@ -1,7 +1,8 @@
 # rook — Setup & Usage Guide
 
 Everything you need to install rook, wire it up on your machine, and actually use it.
-For an overview see the [README](../README.md); to hack on rook see [AGENTS.md](../AGENTS.md).
+For a plain-language tour of every feature see **[FEATURES.md](FEATURES.md)**; for an
+overview see the [README](../README.md); to hack on rook see [AGENTS.md](../AGENTS.md).
 
 - [1. What rook needs on your machine](#1-what-rook-needs-on-your-machine)
 - [2. Install & run](#2-install--run)
@@ -83,10 +84,17 @@ rook **monitors** any agent that writes session transcripts to disk automaticall
 inside a **tmux** session. Two ways:
 
 - **Let rook launch it** — click **+** in the roster (or ⌘K → "Launch agent"), pick a
-  working directory (autocompletes from your local repos), optionally an initial prompt,
-  and whether to isolate it in a git worktree. rook starts it in tmux for you.
+  working directory (autocompletes from your local repos), a **model** (Default /
+  Haiku / Sonnet / Opus), optionally an initial prompt, and whether to isolate it in
+  a git worktree. If the repo has an `AGENTS.md` / `CLAUDE.md`, a **"Follow this
+  repo's agent instructions"** toggle appears (on by default) — leave it checked and
+  the agent reads and follows them first. rook starts it in tmux for you.
 - **Launch it yourself in tmux** — `tmux new -s my-task claude`. rook detects it and it
   becomes controllable.
+
+You can also **reopen a closed session**: click the **↻ Resume** button in the
+roster header (or ⌘K → "resume"), pick a past session, and rook relaunches it with
+its full context and history intact.
 
 An agent started outside tmux still shows up (read-only) — you just can't send it keys.
 
@@ -97,8 +105,10 @@ An agent started outside tmux still shows up (read-only) — you just can't send
 2. Click it in the roster. The **Overview** shows what it's asking.
 3. **Allow** / **Deny**, pick a menu option, or type a reply and send — or open the
    **Terminal** tab and drive it directly.
-4. When it's done, open **Diff** to review, add inline comments (they go back to the
-   agent), and open a **PR** straight from the workspace header (auto-filled from the
+4. When it's done, open **Diff** to review and add inline comments. Each comment
+   becomes a **tracked thread** (open → sent → addressed) that you route to the
+   agent's terminal with **Send open to agent** — threads survive reloads and
+   restarts. Open a **PR** straight from the workspace header (auto-filled from the
    commits; requires *Allow write actions*).
 
 ## 6. GitHub, PRs & tickets
@@ -128,6 +138,9 @@ With `gh` authenticated:
   **risky-command flags** and click-to-open-the-agent.
 - **Workspace** — manage git **worktrees** (multi-select delete, open in editor, jump to
   the agent using one) and the **Claude Code hooks** bridge (install, gate, recent events).
+- **Summaries** — generate and read daily work summaries. Click **Generate**, pick the
+  day, GitHub author, and model; rook spawns an agent that gathers all of that day's
+  agent work (every project) plus your GitHub contributions into one markdown summary.
 
 ## 8. Settings — what to configure
 
@@ -140,7 +153,8 @@ Open **Settings** (gear, bottom of the rail):
 - **Notifications & editor** — ntfy topic (phone push), Slack/Discord webhooks (with a
   **Send test notification** button), and which editor "open in editor" uses.
 - **Trackers & summaries** — Linear token, Jira base/email/token, and daily-summary
-  author/repos/schedule.
+  author / repos / schedule / **model** (defaults to Haiku to keep this low-stakes
+  work cheap).
 
 Settings persist to `~/.rook/config.json`.
 

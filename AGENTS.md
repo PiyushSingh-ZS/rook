@@ -36,11 +36,15 @@ After editing frontend files, restart the binary (assets are embedded at build t
 | `hooks.go` | Claude Code hooks bridge (install into `~/.claude/settings.json`), PreToolUse danger gate, event ring |
 | `review.go`, `reflect.go` | auto-review subagent, build/test verify gate, Reflexion retry loop |
 | `chains.go` | linear task chains (sequential agents), auto-advance on session finish |
-| `diff.go` | git diff for the review surface (merge-base + untracked) |
+| `diff.go` | review diff: canonical `gh pr diff` for PR checkouts, else git merge-base + untracked |
+| `review_comments.go` | inline review comments as persisted threads (open→sent→addressed), routed to the agent's tmux |
+| `resume.go` | list past sessions from transcripts + `claude --resume` a closed one (`/api/sessions/history`, `/api/resume`) |
+| `agentdocs.go` | detect a repo's `AGENTS.md`/`CLAUDE.md`/etc. for the launcher's follow-instructions opt-in |
 | `usage.go`, `pricing.go` | `/api/usage` cost/token breakdown; per-model price estimates |
 | `term_ws.go` | `/ws/term` — real PTY bridged to xterm.js over a WebSocket via `tmux attach` |
 | `spawn.go` | tmux spawn + optional git worktree isolation |
-| `db.go`, `scheduler.go` | SQLite summaries store; daily-summary scheduler |
+| `db.go`, `scheduler.go` | SQLite store (summaries + review comments); daily-summary scheduler + manual generate |
+| `spawn.go` `buildLaunchCmd` | composes the agent command with `--resume` / `--model` (haiku\|sonnet\|opus) |
 | `activity.go`, `audit.go`, `devservers.go`, `notify.go` | activity feed, command audit trail, dev-server discovery, desktop/ntfy/chat notifications |
 | `codex.go`, `agents_extra.go` | Codex / Aider / Gemini adapters |
 | `config.go` | `~/.rook/config.json` settings (Settings UI) |
@@ -123,7 +127,10 @@ build: function (host, ctx) { host.innerHTML = '<div class="ins op-myview"></div
   session's repo is resolved from its **git remote** (`repoForDir`, worktree-aware) and
   exposed as `session.repo`; the PR/issue number comes from the cwd/title.
 - **Context-window fill** = the last assistant turn's `input + cache_read + cache_write`
-  (computed in `scan.go`, `session.contextTokens`); the gauge uses a ~200k denominator.
+  (computed in `scan.go`, `session.contextTokens`). The gauge's denominator is inferred
+  **per model** in `operator.js` (`windowForModel`): if any session on that model has
+  ever exceeded 200k, the whole model is treated as a 1M window — so a 1M agent sitting
+  at 179k reads ~18%, not a false 90%.
 - Editing a `web/` asset twice under the same `?v=` query can serve a stale cached copy
   in the browser — hard-reload, or the embedded copy after a rebuild is authoritative.
 - The board's columns are **derived state** (busy/waiting/idle) — they're read-only, not

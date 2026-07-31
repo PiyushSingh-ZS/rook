@@ -1,84 +1,147 @@
 <div align="center">
 
-# ♜ rook
+<img src="docs/img/logo.svg" alt="rook" width="230" />
 
-### A local mission-control for your AI coding agents
+### One screen to watch and drive all your AI coding agents
 
-Watch, drive, and review **Claude Code · Codex · Aider · Gemini** — all from one screen, all on `localhost`.
+rook is a small, self-hosted dashboard that keeps an eye on every AI coding agent
+running on your machine — **Claude Code, Codex, Aider, Gemini** — and pulls you in
+the moment one needs you. It runs entirely on `localhost`.
+
+<br />
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-000000.svg)](LICENSE)
 [![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg?logo=go&logoColor=white)](go.mod)
-[![Runs locally](https://img.shields.io/badge/runs-100%25%20local-ff5c3a.svg)](#-security)
+[![Runs locally](https://img.shields.io/badge/runs-100%25%20local-ff5c3a.svg)](#-your-machine-your-data)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](CONTRIBUTING.md)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-8a8f98.svg)](#-requirements)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-8a8f98.svg)](#-what-you-need)
 
-**[Setup &amp; Usage](docs/USAGE.md)** · **[Architecture](AGENTS.md)** · **[Contributing](CONTRIBUTING.md)**
+<br />
+
+**[Quick start](#-quick-start)** &nbsp;·&nbsp; **[Features](docs/FEATURES.md)** &nbsp;·&nbsp; **[Setup &amp; usage](docs/USAGE.md)** &nbsp;·&nbsp; **[For AI agents](AGENTS.md)** &nbsp;·&nbsp; **[Contributing](CONTRIBUTING.md)**
 
 </div>
 
+<br />
+
 ![The Operator console](docs/img/operator.png)
 
-<div align="center"><sub>The Operator console — a live agent roster on the left, the selected agent's workspace on the right (Overview · Terminal · Diff · Trace · Files · the PR it's working on).</sub></div>
+<div align="center"><sub><b>The Operator console</b> — your live agent roster on the left, the selected agent's full workspace on the right.</sub></div>
+
+<br />
 
 ---
 
-rook is a self-hosted, single-user dashboard that watches every AI coding agent running
-on your machine and pulls you in the moment one needs you. Approve a permission prompt,
-reply, jump into the agent's live terminal, review its diff, read the PR it's working
-on, or launch a new agent from a GitHub / Linear / Jira ticket — without leaving one
-screen. Everything runs locally, and GitHub access is read-only unless you turn on write
-actions.
+## What is rook?
 
-## Contents
+If you run more than one coding agent at a time, you lose the thread. One is stuck
+on a permission prompt, another finished ten minutes ago, a third is quietly
+burning tokens on the wrong thing — and you're flipping through terminal tabs to
+find out which is which.
 
-- [Why rook](#why-rook)
-- [Why the name “rook”?](#why-the-name-rook)
-- [Screenshots](#-screenshots)
-- [Supported agents](#-supported-agents)
-- [Requirements](#-requirements)
-- [Quick start](#-quick-start)
-- [Configuration](#-configuration)
-- [Security](#-security)
-- [How it works](#-how-it-works)
-- [Contributing](#-contributing) · [License](#-license)
+**rook is one pane of glass over all of them.** Open it in your browser and you see
+every agent, what it's doing, and which ones are waiting on you — with the controls
+to act right there: approve a prompt, reply, jump into the live terminal, review
+the diff, or read the PR it's working on.
 
-## Why rook
+It's **local-first and single-user**. Nothing leaves your machine, and GitHub stays
+read-only until you explicitly turn on write actions.
 
-If you run more than one coding agent at a time, you lose track. One is blocked on a
-permission prompt, another finished ten minutes ago, a third is burning tokens on the
-wrong thing — and you're cycling through terminal tabs to find out. rook is one pane of
-glass over all of them.
+<br />
 
-| | |
-|---|---|
-| 🔔 **Never miss a waiting agent** | A live "needs you" count, with Allow / Deny / reply from the workspace — or the agent's real terminal, embedded via tmux. |
-| 🧠 **See what an agent is doing** | A context-window gauge (how full it is), tool-usage mix, an execution-trace waterfall, and its live diff. |
-| 🔗 **Full PR/issue context, in-app** | Description, commits, linked issues, reviews, and comments for the PR an agent is reviewing — pulled live from GitHub. |
-| ⚡ **Start work without typing paths** | Hand a GitHub / Linear / Jira ticket to an agent; rook fetches the ticket, writes the task, and auto-resolves the local checkout. |
-| 💸 **Know where your tokens go** | 5-hour & 7-day windows with input/cache breakdown, cost by model and by project, a 30-day trend. |
-| 🛡️ **Stay in control** | A searchable audit trail of every command (risky ones flagged), a git-worktree manager, and a dev-server panel. |
+## Why you'll want it
 
-Dark **and** light themes, keyboard-driven, with a ⌘K command palette for everything.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-## Why the name “rook”?
+### 🔔 Never miss a waiting agent
+A live "needs you" count with Allow / Deny / reply right in the workspace — or drop
+into the agent's real terminal, embedded through tmux.
+
+</td>
+<td width="50%" valign="top">
+
+### 🧠 See what an agent is actually doing
+A context-window gauge (how full it is), token and cost totals, a tool-usage mix,
+an execution-trace waterfall, and its live diff.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔗 Full PR &amp; issue context, in-app
+Description, commits, linked issues, reviews, and comments for the PR an agent is
+reviewing — pulled live from GitHub, no tab-switching.
+
+</td>
+<td width="50%" valign="top">
+
+### 💬 Review comments that reach the agent
+Leave inline comments on the diff. rook tracks each as a thread — **open → sent →
+addressed** — and routes them straight to the agent's terminal.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### ⚡ Start work without typing paths
+Hand rook a GitHub / Linear / Jira ticket; it fetches the ticket, writes the task,
+and auto-resolves the local checkout. Launch agents that automatically **follow
+your repo's `AGENTS.md` / `CLAUDE.md`**.
+
+</td>
+<td width="50%" valign="top">
+
+### 💸 Know where your tokens go
+5-hour and 7-day windows with input/cache breakdown, cost by model and by project,
+and a 30-day trend. Route low-stakes work to cheaper models.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### ↻ Reopen anything you closed
+Closed a session by mistake? rook remembers every past session and can **resume it
+with full context** — same conversation, same history.
+
+</td>
+<td width="50%" valign="top">
+
+### 📝 Daily work summaries
+Generate a summary of everything you and your agents did in a day — across every
+project, plus all your GitHub contributions.
+
+</td>
+</tr>
+</table>
+
+Dark **and** light themes, fully keyboard-driven, with a **⌘K** command palette for
+everything. → **[See the full feature guide](docs/FEATURES.md)**
+
+<br />
+
+## Why the name "rook"?
 
 The **rook** is the castle — the tower — on a chessboard. From one fixed square it
-commands whole **ranks and files**, controlling every open lane at once. That's exactly
-the job here: rook is your tower over the board of agents — a single vantage point that
-sees down every lane of work and lets you move on any of them. Short, one syllable, and
-it makes a good command to type: `rook`.
+commands whole **ranks and files**, controlling every open lane at once. That's the
+job here: rook is your tower over the board of agents, a single vantage point that
+sees down every lane of work and lets you move on any of them. Short, one syllable,
+and it makes a good thing to type: `rook`.
 
-## 📸 Screenshots
+<br />
 
-| Insights | Board |
+## 📸 A look around
+
+| | |
 |:--:|:--:|
 | [![Insights](docs/img/insights.png)](docs/img/insights.png) | [![Board](docs/img/board.png)](docs/img/board.png) |
-| Usage, cost by model &amp; project, 30-day trend | Every agent by its live state |
-
-| Inline diff review | PR / issue context |
-|:--:|:--:|
+| **Insights** — usage, cost by model &amp; project, 30-day trend | **Board** — every agent by its live state |
 | [![Diff](docs/img/diff.png)](docs/img/diff.png) | [![PR context](docs/img/pr-context.png)](docs/img/pr-context.png) |
-| File tree, split/unified, comments → agent | Description, commits, linked issues, comments |
+| **Diff review** — file tree, split/unified, inline comments | **PR / issue context** — description, commits, comments |
 
 <div align="center">
 
@@ -88,24 +151,36 @@ it makes a good command to type: `rook`.
 
 </div>
 
+<br />
+
 ## 🤖 Supported agents
 
-| Agent | Monitoring | Control (tmux) |
-|-------|:---------:|:--------------:|
+| Agent | Monitoring | Control (via tmux) |
+|-------|:---------:|:------------------:|
 | **Claude Code** | ✅ stable | ✅ |
 | Codex | 🧪 beta | ✅ |
 | Aider | 🧪 beta | ✅ |
 | Gemini | 🧪 beta | ✅ |
 
-Monitoring works for any agent that writes session transcripts to disk. Control
-(Allow/Deny, live terminal, spawn) requires the agent to run inside a `tmux` session.
+**Monitoring** works for any agent that writes session transcripts to disk — rook
+picks them up automatically. **Control** (Allow/Deny, live terminal, launching new
+agents) needs the agent to run inside a `tmux` session.
 
-## 🧰 Requirements
+<br />
 
-- **Go** — a recent toolchain to build (see the `go` directive in [`go.mod`](go.mod)).
-- **tmux** *(optional, recommended)* — control features. `brew install tmux`
-- **gh CLI** *(optional)* — GitHub view, PR/issue context, clone, PR create/merge. `brew install gh && gh auth login`
-- An AI coding agent (e.g. [Claude Code](https://claude.com/claude-code)) writing session data under `~/.claude`.
+## 🧰 What you need
+
+| Tool | For | Install (macOS) |
+|------|-----|-----------------|
+| **Go** (recent toolchain) | Building rook | `brew install go` |
+| **tmux** *(recommended)* | Controlling agents | `brew install tmux` |
+| **gh** CLI *(recommended)* | GitHub features | `brew install gh && gh auth login` |
+| An **AI coding agent** | The thing rook watches | e.g. [Claude Code](https://claude.com/claude-code) |
+
+tmux and gh are optional — without them rook still **monitors** every agent; you
+just can't drive them or use GitHub features.
+
+<br />
 
 ## 🚀 Quick start
 
@@ -113,68 +188,102 @@ Monitoring works for any agent that writes session transcripts to disk. Control
 git clone https://github.com/PiyushSingh-ZS/rook.git
 cd rook
 
-make run            # builds ./rook and starts it (loopback, port 7480)
-# or: make build && ./rook
-
-open http://127.0.0.1:7480
+make run          # builds ./rook and starts it on http://127.0.0.1:7480
 ```
 
-That's it — rook auto-discovers the agents already running on your machine.
+Then open **http://127.0.0.1:7480**. That's it — rook auto-discovers the agents
+already running on your machine.
 
-> 💡 **New here? Read the [Setup &amp; Usage Guide](docs/USAGE.md)** — install, wiring up
-> tmux + gh, and a walkthrough of every part of the UI.
+> 💡 **New here?** The **[Setup &amp; Usage Guide](docs/USAGE.md)** walks through
+> installing, wiring up tmux + gh, and every part of the UI.
 
-**Control &amp; notifications**
+<br />
 
-- **Control an agent** — launch it inside tmux (`tmux new -s my-task claude`) or use the **+ / Launch agent** button in rook.
-- **Approve dangerous commands from rook** — Settings → install the Claude Code hooks bridge, then turn on the destructive-command gate.
-- **Phone push** — Settings → paste an [ntfy](https://ntfy.sh) topic URL. Desktop notifications are on by default.
+## 🔄 The everyday loop
+
+1. An agent hits a permission prompt → its dot turns amber and the **"needs you"**
+   counter ticks up (with a desktop or phone notification, if enabled).
+2. Click it in the roster. The **Overview** shows exactly what it's asking.
+3. **Allow / Deny**, pick a menu option, or type a reply — or open the **Terminal**
+   tab and drive it directly.
+4. When it's done, open **Diff** to review, leave inline comments (they go back to
+   the agent as tracked threads), and open a **PR** from the workspace header.
+
+<br />
 
 ## ⚙️ Configuration
 
-**Flags**
+**Command-line flags**
 
-| Flag | Default | Purpose |
-|------|---------|---------|
+| Flag | Default | What it does |
+|------|---------|--------------|
 | `--addr` | `127.0.0.1:7480` | Listen address (loopback only by default). |
 | `--notify` | `true` | Desktop notification when an agent starts waiting. |
 | `--token` | *(empty)* | Require this token for non-loopback clients (e.g. over Tailscale). |
 
-**Environment** — `CLAUDE_CONFIG_DIR` points rook at a non-default Claude config directory.
+**In the app (Settings)** — automation (hooks gate, auto-review, auto-verify, allow
+write actions), notifications (ntfy / Slack / Discord), your editor, the daily
+summary schedule + model, and Linear/Jira tokens. Settings are saved to
+`~/.rook/config.json`.
 
-**In-app (Settings)** — automation (hooks gate, auto-review, auto-verify, allow write
-actions), notifications (ntfy / Slack / Discord), editor, and Linear/Jira/summary config.
-Settings persist to `~/.rook/config.json`.
+**Environment** — set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere
+other than `~/.claude`.
 
-## 🔒 Security
+<br />
 
-- Binds to `127.0.0.1` only; non-loopback requests are rejected unless you set `--token`.
-- **GitHub is read-only by default** — PR create/merge are off until you enable *Allow write actions* in Settings.
-- Reads local agent data (`~/.claude`, other agent dirs) and your project directories. **Nothing leaves your machine.**
-- The only state-changing actions are ones you trigger: keystrokes to your own tmux panes, spawning an agent, stopping a dev server, deleting a worktree, and (if enabled) PR create/merge.
+## 🔒 Your machine, your data
+
+- rook binds to **`127.0.0.1` only**. Non-loopback requests are rejected unless you
+  pass `--token` (use that for Tailscale, not the open internet).
+- **GitHub is read-only by default.** PR create/merge only work once you enable
+  *Allow write actions* in Settings.
+- rook reads your local agent data (`~/.claude`, other agent dirs) and your project
+  folders. **Nothing is sent anywhere.**
+- The only state-changing actions are ones you trigger: keystrokes to your own tmux
+  panes, launching an agent, stopping a dev server, deleting a worktree, and (if
+  enabled) PR create/merge.
+
+<br />
 
 ## 🛠 How it works
 
-rook is a single Go binary (built on [GoFr](https://gofr.dev)) with an embedded,
-zero-build web UI. It polls agent session files on disk, maps sessions to tmux panes via
-the process tree, parses transcripts for tokens / tool-calls / changed-files / context,
-and estimates cost from token counts. The browser polls `/api/state` every 2s.
+rook is a **single Go binary** (built on [GoFr](https://gofr.dev)) with an
+embedded, zero-build web UI. It watches agent session files on disk, maps sessions
+to tmux panes through the process tree, parses transcripts for tokens / tool-calls
+/ changed files / context, and estimates cost from token counts. The browser polls
+`/api/state` every two seconds.
 
 ```text
-~/.claude/**/*.jsonl        → sessions, transcripts, tool calls, files changed, context
-tmux capture-pane/send-keys → live terminal + Allow/Deny/reply/spawn
+~/.claude/**/*.jsonl        → sessions, transcripts, tokens, tool calls, files, context
+tmux capture-pane/send-keys → live terminal + Allow / Deny / reply / launch
 gh (read-only by default)   → repos, issues, PRs, PR/issue context
 git remotes                 → auto-resolve a repo's local checkout
 ~/.rook/                    → config.json, rook.db, worktrees/
 ```
 
-For a deeper map of the codebase — and to have an AI agent work on rook — see [AGENTS.md](AGENTS.md).
+Want an AI agent to work on rook itself? **[AGENTS.md](AGENTS.md)** is the codebase
+map written for exactly that.
+
+<br />
+
+## 📚 Documentation
+
+| Doc | What's in it |
+|-----|--------------|
+| **[Features](docs/FEATURES.md)** | Every feature, explained simply, with how to use it. |
+| **[Setup &amp; Usage](docs/USAGE.md)** | Install, configure, and a tour of the whole UI. |
+| **[AGENTS.md](AGENTS.md)** | Architecture &amp; conventions — for humans and AI agents. |
+| **[Contributing](CONTRIBUTING.md)** | Dev setup, checks, and how to add a new view. |
+
+<br />
 
 ## 🤝 Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the
-build/test/lint commands, and the frontend architecture (how to add a new view).
+Contributions welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for dev setup, the
+build/test/lint commands, and the frontend architecture.
 
 ## 📄 License
 
 [MIT](LICENSE) © 2026
+
+<div align="center"><br /><sub>Built for people who run a lot of agents.</sub></div>
