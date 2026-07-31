@@ -47,6 +47,7 @@ type spawnReq struct {
 	Agent    string `json:"agent"`
 	Prompt   string `json:"prompt"`
 	Worktree bool   `json:"worktree"` // isolate in a git worktree (don't touch the user's checkout)
+	Resume   string `json:"resume"`   // Claude session id to resume (restores full context; claude only)
 }
 
 // gitToplevel returns the repo root for a directory, or "" if not a git repo.
@@ -109,6 +110,20 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 	}
 	cmd := agentCmd(req.Agent)
 
+	// Resume restores an existing session's full context/history in place (same
+	// session id). Only Claude supports it; the initial prompt is skipped because
+	// the conversation is picked up where it left off.
+	launch := cmd
+	if req.Resume != "" {
+		if !validSessionID(req.Resume) {
+			return "", "", http.StatusBadRequest, fmt.Errorf("invalid resume session id")
+		}
+		if req.Agent != "" && req.Agent != "claude" {
+			return "", "", http.StatusBadRequest, fmt.Errorf("resume is only supported for Claude sessions")
+		}
+		launch = cmd + " --resume " + req.Resume
+	}
+
 	// Isolate in a git worktree so the agent can `gh pr checkout` / branch without
 	// switching the user's current branch (GitHub review/work handoffs).
 	runDir := req.CWD
@@ -126,7 +141,7 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 		worktree = wt
 	}
 
-	if out, serr := runTmux("new-session", "-d", "-s", req.Name, "-x", "220", "-y", "50", "-c", runDir, cmd); serr != nil {
+	if out, serr := runTmux("new-session", "-d", "-s", req.Name, "-x", "220", "-y", "50", "-c", runDir, launch); serr != nil {
 		return "", "", http.StatusConflict, fmt.Errorf("spawn failed: %s", tmuxErr(serr, out))
 	}
 	if worktree != "" {

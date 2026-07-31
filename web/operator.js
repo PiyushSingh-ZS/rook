@@ -31,6 +31,7 @@
     terminal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 4 4-4 4M12 16h6"/><rect x="2" y="3" width="20" height="18" rx="2.5"/></svg>',
     diff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7M18 9v6"/><circle cx="18" cy="6" r="2.5"/><path d="M12 6h3.5"/></svg>',
     trace: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
+    resume: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg>',
     external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>',
@@ -110,6 +111,45 @@
     if (m) { pendingSpawn = null; selectAgent(m.sessionId); toast("Opened " + (m.title || m.project || "the new agent"), "ok"); }
   }
 
+  // after resuming a closed session, `claude --resume` reuses the SAME session id,
+  // so wait for that exact id to reappear alive, then open it.
+  var pendingResume = null; // { id, since }
+  function trySelectResumed() {
+    if (!pendingResume) return;
+    if (now() - pendingResume.since > 45000) { pendingResume = null; return; } // give up after 45s
+    var m = sessions().filter(function (s) { return s.sessionId === pendingResume.id && s.alive; })[0];
+    if (m) { pendingResume = null; setView("operator"); selectAgent(m.sessionId); toast("Resumed " + (m.title || m.project || "session"), "ok"); }
+  }
+
+  // resumable (not-alive) sessions from /api/sessions/history, shown in the palette
+  var closedSessions = [];
+  async function fetchHistory() {
+    try {
+      var r = await fetch("/api/sessions/history?limit=40", { cache: "no-store" });
+      var j = await r.json(); if (j && j.data) j = j.data;
+      closedSessions = (j || []).filter(function (s) { return !s.alive; });
+      if (paletteOpen) renderPaletteList();
+    } catch (e) {}
+  }
+  function resumeErr(j) {
+    if (!j) return "";
+    if (j.error && j.error.message) return j.error.message;
+    if (typeof j.error === "string") return j.error;
+    return j.message || "";
+  }
+  function resumeSession(id, label) {
+    fetch("/api/resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id }) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: (j && j.data) || j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(resumeErr(res.j) || "couldn't resume that session");
+        pendingResume = { id: id, since: now() };
+        setView("operator");
+        toast("Resuming " + (label || "session") + " — restoring its context…", "ok");
+        setTimeout(poll, 500);
+      })
+      .catch(function (e) { toast((e && e.message) || "Couldn't resume", "err"); });
+  }
+
   // discovered local repos ({path,name,branch,remote}) — lets us auto-resolve a
   // working directory instead of making the user type it.
   var repoList = [];
@@ -148,6 +188,7 @@
     if (!selectedId || !findAgent(selectedId)) {
       var first = pickDefault(); if (first) selectedId = first.sessionId;
     }
+    trySelectResumed(); // open a just-resumed session as soon as it reappears
     if (activeView === "operator") {
       trySelectSpawned(); // grab a just-launched agent as soon as it appears
       renderRoster();
@@ -873,7 +914,7 @@
 
   // ---- command palette -----------------------------------------------------
   var paletteOpen = false, palQuery = "", palItems = [], palIdx = 0;
-  function openPalette() { paletteOpen = true; $("opPalette").hidden = false; palQuery = ""; palIdx = 0; var i = $("palInput"); i.value = ""; i.focus(); renderPaletteList(); }
+  function openPalette() { paletteOpen = true; $("opPalette").hidden = false; palQuery = ""; palIdx = 0; var i = $("palInput"); i.value = ""; i.focus(); fetchHistory(); renderPaletteList(); }
   function closePalette() { paletteOpen = false; $("opPalette").hidden = true; }
   function paletteCommands() {
     return [
@@ -895,13 +936,18 @@
     var q = palQuery.toLowerCase();
     var agents = sessions().map(function (s) { return { g: "Agents", title: s.title || s.project || "session", sub: esc(s.project || "") + " · " + statusOf(s), st: statusOf(s), run: function () { setView("operator"); selectAgent(s.sessionId); }, _s: ((s.title || "") + " " + (s.project || "")).toLowerCase() }; });
     var cmds = paletteCommands().map(function (c) { c._s = (c.title + " " + c.sub).toLowerCase(); return c; });
-    var all = cmds.concat(agents).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
+    var aliveIds = {}; sessions().forEach(function (s) { aliveIds[s.sessionId] = true; });
+    var resumes = closedSessions.filter(function (s) { return !aliveIds[s.sessionId]; }).slice(0, 20).map(function (s) {
+      var when = s.updatedAt ? ago(s.updatedAt, now()) + " ago" : "";
+      return { g: "Resume closed session", title: s.title || s.project || "session", sub: (s.project || "") + (when ? " · " + when : ""), run: function () { resumeSession(s.sessionId, s.title || s.project); }, _s: ((s.title || "") + " " + (s.project || "") + " " + (s.cwd || "")).toLowerCase() };
+    });
+    var all = cmds.concat(agents).concat(resumes).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
     palItems = all; if (palIdx >= all.length) palIdx = Math.max(0, all.length - 1);
     var list = $("palList"), html = "", lastG = null;
     all.forEach(function (it, i) {
       if (it.g !== lastG) { html += '<div class="pal-group">' + esc(it.g) + "</div>"; lastG = it.g; }
       html += '<div class="pal-item ' + (i === palIdx ? "act" : "") + '" data-i="' + i + '">' +
-        (it.st ? '<i class="dot ' + it.st + ' pi-dot"></i>' : (it.g === "Go" ? I.grid : I.send)) +
+        (it.st ? '<i class="dot ' + it.st + ' pi-dot"></i>' : (it.g === "Go" ? I.grid : it.g === "Resume closed session" ? I.resume : I.send)) +
         '<span class="pi-main"><span class="pi-title">' + esc(it.title) + '</span>' + (it.sub ? '<span class="pi-sub">' + esc(it.sub) + "</span>" : "") + "</span>" +
         (it.key ? '<span class="pi-key">' + esc(it.key) + "</span>" : "") + "</div>";
     });
