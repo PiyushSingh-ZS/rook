@@ -1,15 +1,22 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gofr.dev/pkg/gofr"
 )
+
+// diffGitRe extracts the a/ and b/ paths from a "diff --git a/x b/y" header.
+var diffGitRe = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
 
 // maxPatchBytes caps the unified diff we ship to the review UI so a huge
 // generated-file diff can't blow up the response.
@@ -64,16 +71,163 @@ func defaultBranchRef(dir string) string {
 	return ""
 }
 
+// prBaseCache memoizes the PR base ref per worktree dir. A PR's base branch is
+// stable, and the Diff tab reloads on every session switch, so one gh lookup per
+// worktree is plenty. "-" is the sentinel for "checked, no PR / no gh".
+var (
+	prBaseCache = map[string]string{}
+	prBaseMu    sync.Mutex
+)
+
+// prBaseRef resolves the base branch a checkout should be compared against when
+// it belongs to a PR — the PR's OWN base (e.g. "development"), which gh detects
+// from the current branch. Guessing main/master is wrong for repos that
+// integrate on another branch, and inflates the diff with unrelated commits.
+// Returns a git ref ("origin/development") or "" when there's no PR / no gh.
+func prBaseRef(dir string) string {
+	prBaseMu.Lock()
+	if v, ok := prBaseCache[dir]; ok {
+		prBaseMu.Unlock()
+		if v == "-" {
+			return ""
+		}
+		return v
+	}
+	prBaseMu.Unlock()
+
+	ref := resolvePRBaseRef(dir)
+
+	prBaseMu.Lock()
+	if ref == "" {
+		prBaseCache[dir] = "-"
+	} else {
+		prBaseCache[dir] = ref
+	}
+	prBaseMu.Unlock()
+	return ref
+}
+
+// ghDirOut runs a read-only gh command with its working directory set to dir, so
+// gh detects the PR from the checked-out branch. Callers guard ghBin=="".
+func ghDirOut(dir string, args ...string) (string, error) {
+	tctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(tctx, ghBin, args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// resolvePRBaseRef asks gh (inside dir) for the current branch's PR base branch,
+// then maps it to a local git ref. Used only as a fallback when the canonical
+// gh pr diff is unavailable.
+func resolvePRBaseRef(dir string) string {
+	if ghBin == "" {
+		return ""
+	}
+	base, err := ghDirOut(dir, "pr", "view", "--json", "baseRefName", "-q", ".baseRefName")
+	if err != nil || base == "" {
+		return ""
+	}
+	if _, err := gitOut(dir, "rev-parse", "--verify", "--quiet", "origin/"+base); err == nil {
+		return "origin/" + base
+	}
+	if _, err := gitOut(dir, "rev-parse", "--verify", "--quiet", base); err == nil {
+		return base
+	}
+	return ""
+}
+
+// parseUnifiedDiff derives the per-file list and total add/del counts from a
+// unified diff (e.g. `gh pr diff`), so a PR diff needs no extra numstat call.
+// Status comes from the git file-mode/rename headers; default is Modified.
+func parseUnifiedDiff(patch string) ([]diffFile, int, int) {
+	var files []diffFile
+	var cur *diffFile
+	totAdd, totDel := 0, 0
+	flush := func() {
+		if cur != nil {
+			files = append(files, *cur)
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			flush()
+			f := diffFile{Status: "M"}
+			if m := diffGitRe.FindStringSubmatch(line); m != nil {
+				f.Path = m[2] // the b/ path
+			}
+			cur = &f
+		case cur == nil:
+			continue
+		case strings.HasPrefix(line, "new file mode"):
+			cur.Status = "A"
+		case strings.HasPrefix(line, "deleted file mode"):
+			cur.Status = "D"
+		case strings.HasPrefix(line, "rename from"):
+			cur.Status = "R"
+		case strings.HasPrefix(line, "rename to "):
+			cur.Path = strings.TrimSpace(strings.TrimPrefix(line, "rename to "))
+		case strings.HasPrefix(line, "+++ "):
+			if p := strings.TrimPrefix(line, "+++ "); p != "/dev/null" {
+				cur.Path = strings.TrimPrefix(p, "b/")
+			}
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "@@"):
+			// diff header / hunk marker — not content
+		case strings.HasPrefix(line, "+"):
+			cur.Add++
+			totAdd++
+		case strings.HasPrefix(line, "-"):
+			cur.Del++
+			totDel++
+		}
+	}
+	flush()
+	return files, totAdd, totDel
+}
+
+// prDiff returns the canonical PR diff — exactly what GitHub shows for the pull
+// request this checkout belongs to. It's authoritative: unlike a local
+// merge-base diff, it isn't thrown off by stale refs or merge commits the PR
+// branch pulled in from its base. Returns ok=false when there's no PR / no gh.
+func prDiff(dir string) (diffResult, bool) {
+	if ghBin == "" {
+		return diffResult{}, false
+	}
+	num, err := ghDirOut(dir, "pr", "view", "--json", "number", "-q", ".number")
+	if err != nil || num == "" {
+		return diffResult{}, false
+	}
+	patch, err := ghDirOut(dir, "pr", "diff", num)
+	if err != nil {
+		return diffResult{}, false
+	}
+	files, add, del := parseUnifiedDiff(patch)
+	r := diffResult{Base: "PR #" + num, Files: files, Add: add, Del: del}
+	if len(patch) > maxPatchBytes {
+		patch = patch[:maxPatchBytes]
+		r.Truncated = true
+	}
+	r.Patch = patch
+	return r, true
+}
+
 // diffBase returns the commit to diff against: the merge-base between HEAD and
-// the default branch (the fork point), so the review shows what THIS worktree
-// added and not unrelated commits the base gained since. Falls back to HEAD.
+// the base branch (the fork point), so the review shows what THIS worktree added
+// and not unrelated commits the base gained since. Prefers the PR's own base
+// branch; falls back to the repo default, then HEAD.
 func diffBase(dir string) string {
-	def := defaultBranchRef(dir)
-	if def != "" {
-		if mb, err := gitOut(dir, "merge-base", "HEAD", def); err == nil && mb != "" {
+	base := prBaseRef(dir)
+	if base == "" {
+		base = defaultBranchRef(dir)
+	}
+	if base != "" {
+		if mb, err := gitOut(dir, "merge-base", "HEAD", base); err == nil && mb != "" {
 			return mb
 		}
-		return def
+		return base
 	}
 	return "HEAD"
 }
@@ -108,6 +262,16 @@ func computeDiff(dir string) (diffResult, error) {
 	if !isWorkTree(dir) {
 		return r, errf(http.StatusBadRequest, "not a git work tree")
 	}
+
+	// Decision: prefer the canonical PR diff for a review checkout.
+	// A checkout tied to a pull request should show exactly what GitHub shows
+	// for that PR. A local merge-base diff gets polluted when the PR branch has
+	// merged its base in (dragging other PRs' files into view) or when the local
+	// base ref is stale — which is precisely what made a 2-file PR read as 56.
+	if pr, ok := prDiff(dir); ok {
+		return pr, nil
+	}
+
 	base := diffBase(dir)
 	r.Base = base
 
