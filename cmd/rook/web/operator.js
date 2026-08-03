@@ -542,6 +542,20 @@
         '<div class="ov-ctx-bar"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
         (pct >= 85 ? '<div class="ov-ctx-hint">near the limit — compact to free the window before recall degrades</div>' : "") + "</div>";
     }
+    // Quality & cost — the per-session score + breakdown, inline on the overview
+    if (s.tokensTotal > 0 || (s.toolCalls && s.toolCalls.length)) {
+      var qv = s.qualityScore == null ? 100 : s.qualityScore;
+      var perMtok = s.tokensTotal > 0 ? "$" + (s.costUsd / (s.tokensTotal / 1e6)).toFixed(2) + " /M tok" : "";
+      var qfac = (s.qualityFactors || []).map(function (f) {
+        return '<div class="q-row ' + (f.ok ? "ok" : "bad") + '"><span class="q-row-ic">' + (f.ok ? "✓" : "−" + f.penalty) + '</span><span class="q-row-main"><b>' + esc(f.name) + "</b><span>" + esc(f.detail) + "</span></span></div>";
+      }).join("");
+      h += '<div class="ov-sec-label">Quality &amp; cost</div>' +
+        '<div class="q-detail ovq-card">' +
+          '<div class="q-hero"><div class="q-score ' + qualityCls(qv) + '">' + qv + "</div>" +
+            '<div class="q-hero-lab"><b>' + esc(s.qualityLabel || "") + "</b><span>work-quality score</span></div>" +
+            '<div class="q-cost"><div class="qc-v">' + fmtUSD(s.costUsd) + '</div><div class="qc-k">cost' + (perMtok ? " · " + esc(perMtok) : "") + "</div></div></div>" +
+          '<div class="q-rows">' + qfac + "</div></div>";
+    }
     var changed = (s.changedFiles || []).length;
     var health = s.health ? (s.health.level === "alert" ? "⚠ " : "") + (s.health.reason || s.health.level) : "healthy";
     h += '<div class="ov-stats">' +
