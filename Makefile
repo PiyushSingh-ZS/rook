@@ -5,7 +5,7 @@ ADDR   := 127.0.0.1:7480
 
 ## build: compile the rook binary for this machine
 build:
-	go build -o $(BINARY) .
+	go build -o $(BINARY) ./cmd/rook
 
 ## run: build and run (loopback only)
 run: build
@@ -13,11 +13,11 @@ run: build
 
 ## dev: run straight from source
 dev:
-	go run . --addr $(ADDR)
+	go run ./cmd/rook --addr $(ADDR)
 
 ## build-linux: cross-compile a Linux amd64 binary for deployment
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -o $(BINARY)-linux-amd64 .
+	GOOS=linux GOARCH=amd64 go build -o $(BINARY)-linux-amd64 ./cmd/rook
 
 ## fmt: format all Go sources
 fmt:
