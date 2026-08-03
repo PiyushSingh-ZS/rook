@@ -46,6 +46,8 @@ type Session struct {
 	TokensTotal int64      `json:"tokensTotal"` // total input+output for this session
 	ContextTokens int64    `json:"contextTokens"` // context-window fill at the latest turn (input+cache) — how "full" the agent is
 	ReflectionAttempts int `json:"reflectionAttempts"` // Reflexion retries recorded in this worktree's episodic buffer
+	ToolResults int      `json:"toolResults"` // total tool_result blocks (denominator for tool-error rate)
+	ToolErrors  int      `json:"toolErrors"`  // tool_result blocks flagged is_error
 	QualityScore   int             `json:"qualityScore"`   // 0–100 work-quality signal (looping, retries, stalls) — not a correctness judgment
 	QualityLabel   string          `json:"qualityLabel"`   // excellent | good | fair | at risk
 	QualityReasons []string        `json:"qualityReasons,omitempty"` // what moved the score
@@ -147,6 +149,8 @@ type parsedTranscript struct {
 	model        string
 	usage        []usageEvent
 	tools        []ToolCall
+	toolResults  int      // total tool_result blocks seen
+	toolErrors   int      // tool_result blocks flagged is_error
 	changedFiles []string // files edited/written, most-recent last
 	pendingTool  ToolCall // newest tool_use awaiting a result
 	pendingFull  string   // untruncated detail of the pending tool (e.g. full command)
@@ -240,6 +244,13 @@ func readTranscript(path string) *parsedTranscript {
 		if len(tl.ToolUseResult) > 0 {
 			p.hasPending = false
 		}
+		// count tool_result blocks + errors (these live on user-role lines) so the
+		// quality score can use the tool-call error rate.
+		if tl.Message != nil {
+			tr, te := countToolResults(tl.Message.Content)
+			p.toolResults += tr
+			p.toolErrors += te
+		}
 		if tl.Type != "assistant" || tl.Message == nil {
 			continue
 		}
@@ -299,6 +310,30 @@ type contentBlock struct {
 	Name  string          `json:"name"`
 	Text  string          `json:"text"`
 	Input json.RawMessage `json:"input"`
+}
+
+// countToolResults counts tool_result blocks in a message's content and how many
+// were flagged is_error — the raw material for the tool-call error rate.
+func countToolResults(raw json.RawMessage) (total, errs int) {
+	if len(raw) == 0 {
+		return 0, 0
+	}
+	var blocks []struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return 0, 0
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			total++
+			if b.IsError {
+				errs++
+			}
+		}
+	}
+	return total, errs
 }
 
 // extractContent returns the tool calls, the trailing text block, any files
@@ -687,6 +722,8 @@ func ScanSessions(maxTools int) []Session {
 				s.Model = p.model
 				s.TokensTotal = p.tokensTotal
 				s.ContextTokens = p.contextTokens
+				s.ToolResults = p.toolResults
+				s.ToolErrors = p.toolErrors
 				s.ChangedFiles = p.changedFiles
 				if s.Status == "waiting" {
 					s.Asking = describeWaiting(p)

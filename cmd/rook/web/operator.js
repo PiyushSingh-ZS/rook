@@ -612,9 +612,9 @@
         '<span class="q-row-ic">' + (f.ok ? "✓" : "−" + f.penalty) + "</span>" +
         '<span class="q-row-main"><b>' + esc(f.name) + "</b><span>" + esc(f.detail) + "</span></span></div>";
     }).join("");
-    var note = "<b>What this is:</b> a read on how the run went — looping, retries needed to pass checks, and stalls — from signals rook already tracks. " +
-      "<b>What it is not:</b> a check that the output is correct (there is no LLM judge here). A 100 means nothing went visibly wrong, not that the work is verified. " +
-      "For real pass/fail and review signals, turn on Auto-verify and Review passes in Settings.";
+    var note = "<b>What this is:</b> a read on how the run went — anchored on the build/test outcome and the tool-call error rate, with looping/retries/stalls as minor factors — all from signals rook tracks locally. " +
+      "<b>What it is not:</b> a check that the output is correct (there is no LLM judge here). A 100 with no gate run means nothing went visibly wrong, not that the work is verified. " +
+      "Turn on Auto-verify in Settings so the build/test outcome drives the score.";
     var body = '<div class="q-detail">' +
       '<div class="q-hero"><div class="q-score ' + qualityCls(q) + '">' + q + "</div>" +
         '<div class="q-hero-lab"><b>' + esc(s.qualityLabel || "") + "</b><span>work-quality score</span></div>" +

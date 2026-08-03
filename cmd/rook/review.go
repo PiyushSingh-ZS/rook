@@ -197,10 +197,14 @@ func runVerify(dir, cmd string) verifyResult {
 	case <-done:
 	case <-time.After(4 * time.Minute):
 		_ = c.Process.Kill()
-		return verifyResult{Ran: true, Cmd: cmd, OK: false, Output: "verification timed out after 4m"}
+		res := verifyResult{Ran: true, Cmd: cmd, OK: false, Output: "verification timed out after 4m"}
+		recordVerify(dir, res)
+		return res
 	}
 	ok := c.ProcessState != nil && c.ProcessState.Success()
-	return verifyResult{Ran: true, Cmd: cmd, OK: ok, Output: tail(string(out), 4000)}
+	res := verifyResult{Ran: true, Cmd: cmd, OK: ok, Output: tail(string(out), 4000)}
+	recordVerify(dir, res) // remember pass/fail per worktree for the quality score
+	return res
 }
 
 func tail(s string, n int) string {
