@@ -148,6 +148,25 @@ var editorCmds = map[string][]string{
 type openEditorReq struct {
 	Path   string `json:"path"`
 	Editor string `json:"editor"`
+	Line   int    `json:"line"` // optional: jump to this line when Path is a file
+}
+
+// editorOpenArgs builds the CLI arguments to open a file at a line for each
+// supported editor, falling back to just opening the file when no line is given.
+func editorOpenArgs(ed, path string, line int) []string {
+	if line <= 0 {
+		return []string{path}
+	}
+	switch ed {
+	case "code", "cursor":
+		return []string{"-g", fmt.Sprintf("%s:%d", path, line)}
+	case "zed", "subl":
+		return []string{fmt.Sprintf("%s:%d", path, line)}
+	case "idea":
+		return []string{"--line", strconv.Itoa(line), path}
+	default:
+		return []string{path}
+	}
 }
 
 func handleOpenEditor(ctx *gofr.Context) (any, error) {
@@ -166,14 +185,21 @@ func handleOpenEditor(ctx *gofr.Context) (any, error) {
 	if !ok {
 		return nil, errf(http.StatusBadRequest, "unknown editor %q", ed)
 	}
-	if fi, err := os.Stat(req.Path); err != nil || !fi.IsDir() {
-		return nil, errf(http.StatusBadRequest, "path is not a directory")
+	info, err := os.Stat(req.Path)
+	if err != nil {
+		return nil, errf(http.StatusBadRequest, "path not found")
+	}
+	var args []string
+	if info.IsDir() {
+		args = []string{req.Path} // open the folder; line is meaningless
+	} else {
+		args = editorOpenArgs(ed, req.Path, req.Line) // open the file, optionally at a line
 	}
 	bin := cmd[0]
 	if _, err := exec.LookPath(bin); err != nil {
 		return nil, errf(http.StatusBadRequest, "%s is not installed / not on PATH", bin)
 	}
-	c := exec.Command(bin, append(cmd[1:], req.Path)...)
+	c := exec.Command(bin, append(cmd[1:], args...)...)
 	if err := c.Start(); err != nil {
 		return nil, errf(http.StatusInternalServerError, "launch %s: %v", bin, err)
 	}

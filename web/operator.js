@@ -319,7 +319,8 @@
     ["terminal", "Terminal", I.terminal],
     ["diff", "Diff", I.diff],
     ["trace", "Trace", I.trace],
-    ["files", "Files", I.file]
+    ["files", "Files", I.file],
+    ["find", "Find", I.search]
   ];
   function teardownTerm() { if (ws.term) { try { ws.term.ws && ws.term.ws.close(); } catch (e) {} try { ws.term.xt && ws.term.xt.dispose(); } catch (e) {} try { ws.term.ro && ws.term.ro.disconnect(); } catch (e) {} ws.term = null; } }
 
@@ -339,7 +340,7 @@
       if (t[0] === "files" && changed) badge = '<span class="tab-badge">' + changed + "</span>";
       if (t[0] === "trace" && (s.toolCalls || []).length) badge = '<span class="tab-badge">' + (s.toolCalls || []).length + "</span>";
       var dis = (t[0] === "terminal" && !(s.controllable && s.tmuxPane)) ? ' style="opacity:.4;pointer-events:none"' : "";
-      var dis2 = (t[0] === "diff" && !s.cwd) ? ' style="opacity:.4;pointer-events:none"' : "";
+      var dis2 = ((t[0] === "diff" || t[0] === "find") && !s.cwd) ? ' style="opacity:.4;pointer-events:none"' : "";
       return '<button class="ws-tab ' + (t[0] === ws.tab ? "on" : "") + '" data-tab="' + t[0] + '"' + dis + dis2 + ">" + t[2] + "<span>" + t[1] + "</span>" + badge + "</button>";
     }).join("");
     ws.ghRef = ghRefFromSession(s);
@@ -367,6 +368,7 @@
         '<div class="ws-panel" id="wsDiff"></div>' +
         '<div class="ws-panel" id="wsTrace"></div>' +
         '<div class="ws-panel" id="wsFiles"></div>' +
+        '<div class="ws-panel" id="wsFind"></div>' +
         '<div class="ws-panel" id="wsContext"></div>' +
       "</div>";
     host.querySelectorAll(".ws-tab").forEach(function (b) { b.addEventListener("click", function () { switchTab(b.dataset.tab); }); });
@@ -379,13 +381,14 @@
 
   function switchTab(tab) { ws.tab = tab; document.querySelectorAll(".ws-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === tab); }); activateTab(tab); }
   function activateTab(tab) {
-    var map = { overview: "wsOverview", terminal: "wsTerm", diff: "wsDiff", trace: "wsTrace", files: "wsFiles", context: "wsContext" };
+    var map = { overview: "wsOverview", terminal: "wsTerm", diff: "wsDiff", trace: "wsTrace", files: "wsFiles", find: "wsFind", context: "wsContext" };
     Object.keys(map).forEach(function (k) { var p = $(map[k]); if (p) p.classList.toggle("on", k === tab); });
     if (tab === "overview") renderOverview();
     else if (tab === "files") renderFiles();
     else if (tab === "trace") renderTraceTab();
     else if (tab === "diff") loadDiff();
     else if (tab === "terminal") openTermTab();
+    else if (tab === "find") renderFind();
     else if (tab === "context") renderContext();
   }
 
@@ -657,6 +660,68 @@
       } else { p.innerHTML = "<pre style='padding:16px;white-space:pre-wrap'>" + esc(d.patch || "") + "</pre>"; return; }
       loadReviewThreads(s.sessionId, threads); // hydrate persisted threads (survive reload/restart)
     } catch (e) { p.innerHTML = '<div class="op-empty">' + I.alert + '<div class="t">Couldn\'t load diff</div></div>'; }
+  }
+
+  // ---- Find: search the agent's repo (grep/ripgrep, no index) ---------------
+  function renderFind() {
+    var p = $("wsFind"); if (!p) return;
+    var s = findAgent(selectedId);
+    if (!s || !s.cwd) { p.innerHTML = '<div class="op-empty">' + I.search + '<div class="t">No working directory</div></div>'; return; }
+    if (p.dataset.for === selectedId) { var inp = $("wsFindInput"); inp && inp.focus(); return; } // keep state on re-activate
+    p.dataset.for = selectedId;
+    var cwd = s.cwd;
+    p.innerHTML =
+      '<div class="ws-find">' +
+        '<div class="ws-find-bar">' + I.search +
+          '<input id="wsFindInput" placeholder="Search this repo — symbol, string, regex…" autocomplete="off" spellcheck="false" />' +
+          '<span class="ws-find-meta mono" id="wsFindMeta"></span>' +
+        "</div>" +
+        '<div class="ws-find-results" id="wsFindResults"><div class="op-empty">' + I.search + '<div class="t">Search the agent\'s repo</div><div class="h">Exact file:line hits — ripgrep / git grep, no index. Click a hit to open it in your editor.</div></div></div>' +
+      "</div>";
+    var input = $("wsFindInput"), meta = $("wsFindMeta"), results = $("wsFindResults");
+    var timer = null, lastQ = null;
+    function run() {
+      var q = input.value.trim();
+      if (q === lastQ) return; lastQ = q;
+      if (q.length < 2) { results.innerHTML = '<div class="op-empty">' + I.search + '<div class="t">Type at least 2 characters</div></div>'; meta.textContent = ""; return; }
+      meta.textContent = "searching…";
+      fetch("/api/context?dir=" + encodeURIComponent(cwd) + "&q=" + encodeURIComponent(q), { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.data) j = j.data; if (input.value.trim() !== q) return; renderFindResults(results, meta, cwd, q, j || {}); })
+        .catch(function () { meta.textContent = ""; results.innerHTML = '<div class="op-empty">' + I.alert + '<div class="t">Search failed</div></div>'; });
+    }
+    input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(run, 220); });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") { clearTimeout(timer); run(); } });
+    setTimeout(function () { input.focus(); }, 30);
+  }
+  function findHighlight(text, q) {
+    var e = esc(text);
+    try {
+      var eq = esc(q), idx = e.toLowerCase().indexOf(eq.toLowerCase());
+      if (idx >= 0) return e.slice(0, idx) + "<mark>" + e.slice(idx, idx + eq.length) + "</mark>" + e.slice(idx + eq.length);
+    } catch (x) {}
+    return e;
+  }
+  function renderFindResults(results, meta, cwd, q, j) {
+    var m = j.matches || [], base = cwd.replace(/\/+$/, "");
+    meta.textContent = (j.count || 0) + (j.count >= 100 ? "+" : "") + " hit" + (j.count === 1 ? "" : "s") + (j.tool ? " · " + j.tool : "");
+    if (!m.length) { results.innerHTML = '<div class="op-empty">' + I.search + '<div class="t">No matches for “' + esc(q) + '”</div></div>'; return; }
+    results.innerHTML = m.map(function (r) {
+      var abs = r.file.charAt(0) === "/" ? r.file : base + "/" + r.file;
+      var rel = abs.indexOf(base + "/") === 0 ? abs.slice(base.length + 1) : r.file;
+      return '<div class="ws-find-row" data-abs="' + esc(abs) + '" data-line="' + r.line + '" title="Open in editor">' +
+        '<div class="ws-find-loc mono"><span class="ff-file">' + esc(rel) + '</span><span class="ff-line">:' + r.line + "</span></div>" +
+        '<div class="ws-find-code mono">' + findHighlight(r.text, q) + "</div>" +
+      "</div>";
+    }).join("");
+    results.querySelectorAll(".ws-find-row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        fetch("/api/open-editor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: row.dataset.abs, line: parseInt(row.dataset.line, 10) }) })
+          .then(function (r) { return r.json().then(function (jj) { return { ok: r.ok, j: (jj && jj.data) || jj }; }); })
+          .then(function (res) { toast(res.ok ? "Opened in editor" : (resumeErr(res.j) || "Couldn't open — set your editor in Settings"), res.ok ? "ok" : "err"); })
+          .catch(function () { toast("Couldn't open", "err"); });
+      });
+    });
   }
 
   function openTermTab() {
