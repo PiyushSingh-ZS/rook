@@ -13,18 +13,22 @@ frontend bundler.
 ## Build / run / test
 
 ```bash
-go build -o rook .        # or: make build
+go build -o rook ./cmd/rook   # or: make build
 ./rook                    # or: make run   → serves http://127.0.0.1:7480
 go test ./...             # Go unit tests (gomock + testify + sqlmock)
 make fmt                  # gofmt
 make vet                  # go vet
-node --check web/<file>.js  # the frontend has NO build step — syntax-check JS this way
+node --check cmd/rook/web/<file>.js  # the frontend has NO build step — syntax-check JS this way
 ```
 
 There is no JS build/bundle. Files in `web/` are served as-is (embedded via `go:embed`).
 After editing frontend files, restart the binary (assets are embedded at build time).
 
 ## Backend (Go, single `package main`)
+
+Lives in **`cmd/rook/`** (the embedded UI is `cmd/rook/web/`); `go.mod` stays at
+the repo root. Build with `go build ./cmd/rook` (or `make build`). Paths below are
+relative to `cmd/rook/`.
 
 | File | Responsibility |
 |------|----------------|
@@ -115,7 +119,7 @@ build: function (host, ctx) { host.innerHTML = '<div class="ins op-myview"></div
 ## Verification loop (before claiming done)
 
 1. `go build ./...` and `go test ./...` green.
-2. `node --check web/<changed>.js` for each changed JS file.
+2. `node --check cmd/rook/web/<changed>.js` for each changed JS file.
 3. Restart the binary and **look at the surface in a browser at a realistic width
    (~1512–1728) in BOTH themes** — most bugs (overflow, dead space, missing colors)
    only show at real size. Scroll it.
