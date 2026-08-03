@@ -936,6 +936,7 @@
           toggle("Auto-compact near context limit", "autoCompact", cfg.autoCompact, "tell an idle agent to /compact when its context passes ~85%") +
           toggle("Allow write actions", "allowWrite", cfg.allowWrite, "enable PR create/merge to GitHub") +
           field("Max reflect iterations", "maxReflectIterations", cfg.maxReflectIterations || "", "3", "number") +
+          field("Review passes (diverse panel)", "reviewPasses", cfg.reviewPasses || "", "1 = single · 2–3 = panel", "number") +
         "</div>" +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Claude Code hooks</div><div class="ins-card-meta">' + (hooks.installed ? '<span class="pill ok">installed</span>' : '<span class="pill dead">not installed</span>') + "</div></div>" +
           '<div class="set-hint mono" style="margin-bottom:10px;word-break:break-all">' + esc(hooks.settingsPath || "") + "</div>" +
@@ -963,7 +964,7 @@
         "</div>" +
       "</div>" +
       '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="btn primary" id="setSave">' + I.check + 'Save settings</button><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span></div>';
-    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, autoCompact: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
+    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, autoCompact: 1, maxReflectIterations: 1, reviewPasses: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
     $("setSave").addEventListener("click", async function () {
       var out = {};
       Object.keys(cfgKeys).forEach(function (k) {

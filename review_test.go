@@ -46,10 +46,18 @@ func TestRunVerify(t *testing.T) {
 }
 
 func TestReviewPromptIsReadOnly(t *testing.T) {
-	p := reviewPrompt()
-	for _, must := range []string{"read-only", "git diff", "VERDICT"} {
+	p := reviewPrompt("")
+	for _, must := range []string{"read-only", "git diff", "VERDICT", "DISTILLED"} {
 		if !contains(p, must) {
 			t.Errorf("review prompt missing %q", must)
 		}
+	}
+	// a lens is injected into the prompt when provided (diverse panel)
+	lensed := reviewPrompt(reviewLenses[0])
+	if !contains(lensed, reviewLenses[0]) {
+		t.Errorf("lensed review prompt should include the lens text")
+	}
+	if contains(p, reviewLenses[0]) {
+		t.Errorf("un-lensed prompt must not carry a lens")
 	}
 }

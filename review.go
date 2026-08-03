@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,13 +20,31 @@ import (
 //   2. a test/lint/build gate that actually runs the project's checks — 2.2
 // Both can fire automatically on the Stop hook, or on demand from the diff UI.
 
+// reviewLenses give each pass of a multi-pass review a distinct focus — a
+// diverse panel catches more than the same reviewer run twice (the research's
+// judge-panel/diversity pattern). Used only when reviewPasses > 1.
+var reviewLenses = []string{
+	"Focus especially on correctness/bugs and security.",
+	"Focus especially on missing tests, edge cases, and needless complexity (call out simpler equivalents).",
+	"Focus especially on API/contract changes, backward compatibility, and error handling.",
+}
+
 // reviewPrompt is the read-only reviewer prompt pointed at a worktree's changes.
-func reviewPrompt() string {
-	return strings.Join([]string{
+// The output is deliberately DISTILLED (the isolate boundary — 7.6): the reviewer
+// returns a short, actionable verdict rather than dumping its whole trajectory.
+func reviewPrompt(lens string) string {
+	lines := []string{
 		"You are a strict, read-only code reviewer. Review the UNCOMMITTED and committed changes in this working tree (run `git diff` and `git diff --staged`, and `git status`).",
 		"Report concrete issues only, grouped as: Correctness/bugs, Security, Missing tests, Style. Cite file:line for each. If a change looks wrong, say why and suggest the fix.",
-		"Do NOT modify any files, do NOT commit, do NOT run destructive commands. When done, print a one-line VERDICT: SHIP / FIX-FIRST / BLOCK with a one-sentence reason.",
-	}, "\n")
+	}
+	if lens != "" {
+		lines = append(lines, lens)
+	}
+	lines = append(lines,
+		"Keep the whole review DISTILLED: at most ~25 lines / ~1500 tokens — a summary a human can act on, not a transcript. Skip trivia.",
+		"Do NOT modify any files, do NOT commit, do NOT run destructive commands. Lead with a one-line VERDICT: SHIP / FIX-FIRST / BLOCK and a one-sentence reason.",
+	)
+	return strings.Join(lines, "\n")
 }
 
 type reviewReq struct {
@@ -55,12 +74,34 @@ func spawnReview(path string) (string, int, error) {
 	if !isWorkTree(path) {
 		return "", http.StatusBadRequest, fmt.Errorf("not a git work tree")
 	}
-	name := "review-" + safeName(filepath.Base(path)) + "-" + reviewStamp(path)
-	_, _, _, err = spawnAgentSession(spawnReq{Name: name, CWD: path, Agent: "claude", Prompt: reviewPrompt()})
-	if err != nil {
-		return "", http.StatusConflict, err
+	// reviewPasses > 1 runs a diverse panel (each pass a different lens) for
+	// higher-accuracy review at extra cost — opt-in, capped at the lens count.
+	passes := loadConfig().ReviewPasses
+	if passes < 1 {
+		passes = 1
 	}
-	return name, 0, nil
+	if passes > len(reviewLenses) {
+		passes = len(reviewLenses)
+	}
+	base := "review-" + safeName(filepath.Base(path)) + "-" + reviewStamp(path)
+	var first string
+	var firstErr error
+	for i := 0; i < passes; i++ {
+		name := base
+		lens := ""
+		if passes > 1 {
+			name = base + "-p" + strconv.Itoa(i+1)
+			lens = reviewLenses[i]
+		}
+		_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: path, Agent: "claude", Prompt: reviewPrompt(lens)})
+		if i == 0 {
+			first, firstErr = name, err
+		}
+	}
+	if firstErr != nil {
+		return "", http.StatusConflict, firstErr
+	}
+	return first, 0, nil
 }
 
 // safeName sanitizes a directory basename into a tmux-safe session token.
