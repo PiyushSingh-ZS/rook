@@ -10,7 +10,7 @@ docs/ROADMAP_V2_AGENT_QUALITY.md
 docs/UI_UX_SPEC.md
 docs/screenshot-home.png
 
-# built binaries
+# built binaries (anchored to repo root so they don't match the cmd/rook/ source dir)
 /agentpeek-local
-rook
+/rook-linux-amd64
 *.test
