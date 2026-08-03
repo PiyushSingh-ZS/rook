@@ -186,36 +186,80 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 	return cmd, worktree, 0, nil
 }
 
-// sendInitialPrompt waits for the agent's TUI to finish booting (the pane output
-// stops changing) before typing the prompt, so keystrokes aren't lost during the
-// splash/spinner. Falls back to sending after a max wait.
+// sendInitialPrompt types the initial prompt into a freshly-launched agent TUI
+// and submits it — robustly. Waiting for "output stopped changing" isn't enough:
+// the long Claude Code v2 splash + MCP-auth banner can eat keystrokes typed too
+// early, leaving the agent idle at an empty prompt. So we wait until the REPL is
+// actually interactive, then type, VERIFY the text landed, and retry if it didn't.
 func sendInitialPrompt(target, prompt string) {
-	deadline := time.Now().Add(25 * time.Second)
-	var last string
-	stable := 0
-	for time.Now().Before(deadline) {
-		time.Sleep(700 * time.Millisecond)
-		out, err := runTmux("capture-pane", "-p", "-t", target)
-		if err != nil {
-			continue // pane not ready yet
-		}
-		cur := string(out)
-		if strings.TrimSpace(cur) != "" && cur == last {
-			stable++
-			if stable >= 2 { // unchanged across two polls → booted
-				break
-			}
-		} else {
-			stable = 0
-		}
-		last = cur
-	}
+	waitForPromptReady(target, 45*time.Second)
 	time.Sleep(500 * time.Millisecond)
-	if err := tmuxSendKeys(target, true, prompt); err != nil {
-		return
+
+	// type the prompt; confirm it appears in the input; retry if keystrokes dropped
+	landed := false
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := tmuxSendKeys(target, true, prompt); err != nil {
+			return
+		}
+		time.Sleep(600 * time.Millisecond)
+		if promptEntered(target, prompt) {
+			landed = true
+			break
+		}
+		_ = tmuxSendKeys(target, false, "C-u") // clear any partial input, then retry
+		time.Sleep(400 * time.Millisecond)
+	}
+	if !landed {
+		// last resort: type once more so we don't silently no-op
+		_ = tmuxSendKeys(target, true, prompt)
+		time.Sleep(400 * time.Millisecond)
 	}
 	time.Sleep(200 * time.Millisecond)
 	_ = tmuxSendKeys(target, false, "Enter")
+}
+
+// promptReadyMarkers are strings that appear once the agent REPL is interactive
+// (its input line / status bar is drawn), so keystrokes will register.
+var promptReadyMarkers = []string{"for shortcuts", "❯", "esc to interrupt", "manual mode", "accept edits"}
+
+// paneReady reports whether a captured pane looks like an interactive REPL.
+func paneReady(capture string) bool {
+	for _, m := range promptReadyMarkers {
+		if strings.Contains(capture, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneHasPrompt reports whether a distinctive leading chunk of the prompt appears
+// in the captured pane — i.e. the keystrokes landed in the input.
+func paneHasPrompt(capture, prompt string) bool {
+	needle := strings.TrimSpace(prompt)
+	if len(needle) > 24 {
+		needle = needle[:24]
+	}
+	return needle == "" || strings.Contains(capture, needle)
+}
+
+// waitForPromptReady polls the pane until the REPL looks interactive (or timeout).
+func waitForPromptReady(target string, max time.Duration) {
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		time.Sleep(600 * time.Millisecond)
+		if out, err := runTmux("capture-pane", "-p", "-t", target); err == nil && paneReady(string(out)) {
+			return
+		}
+	}
+}
+
+// promptEntered captures the pane and checks whether the prompt landed in it.
+func promptEntered(target, prompt string) bool {
+	out, err := runTmux("capture-pane", "-p", "-t", target)
+	if err != nil {
+		return false
+	}
+	return paneHasPrompt(string(out), prompt)
 }
 
 // applyKeyAction sends a control action's keystrokes to a tmux target. Returns
