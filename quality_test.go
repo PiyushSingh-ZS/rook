@@ -5,20 +5,28 @@ import "testing"
 func qtc(name string) ToolCall { return ToolCall{Name: name, Summary: name} }
 
 func TestComputeQuality(t *testing.T) {
-	// healthy: no loops, no retries, no health flag → perfect
-	sc, label, reasons := computeQuality(Session{})
+	// healthy: no loops, no retries, no health flag → perfect, all factors OK
+	sc, label, factors := computeQuality(Session{})
 	if sc != 100 || label != "excellent" {
 		t.Fatalf("healthy = %d/%s, want 100/excellent", sc, label)
 	}
-	if len(reasons) != 1 || reasons[0] != "no problems detected" {
-		t.Fatalf("healthy reasons = %v", reasons)
+	if len(factors) != 3 {
+		t.Fatalf("expected 3 factors, got %d", len(factors))
+	}
+	for _, f := range factors {
+		if !f.OK || f.Penalty != 0 {
+			t.Fatalf("healthy factor %q should be clean, got ok=%v pen=%d", f.Name, f.OK, f.Penalty)
+		}
 	}
 
-	// looping: 5 identical consecutive tool calls → capped -30
+	// looping: 5 identical consecutive tool calls → capped -30, that factor not OK
 	loop := []ToolCall{qtc("Bash"), qtc("Bash"), qtc("Bash"), qtc("Bash"), qtc("Bash")}
-	sc, label, _ = computeQuality(Session{ToolCalls: loop})
+	sc, label, factors = computeQuality(Session{ToolCalls: loop})
 	if sc != 70 || label != "good" {
 		t.Fatalf("looping = %d/%s, want 70/good", sc, label)
+	}
+	if factors[0].OK || factors[0].Penalty != 30 {
+		t.Fatalf("looping factor should be -30 not-ok, got ok=%v pen=%d", factors[0].OK, factors[0].Penalty)
 	}
 
 	// reflexion retries: 2 → -20

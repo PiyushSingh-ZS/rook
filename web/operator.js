@@ -536,6 +536,7 @@
       send.addEventListener("click", doSend);
       ta.addEventListener("keydown", function (e) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doSend(); } });
     }
+    $("ovQuality") && $("ovQuality").addEventListener("click", function () { showQuality(s); });
     $("ovCompact") && $("ovCompact").addEventListener("click", function () {
       fetch("/api/compact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId }) })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: (j && j.data) || j }; }); })
@@ -555,8 +556,30 @@
   function qualityHTML(s) {
     if (!(s.tokensTotal > 0 || (s.toolCalls && s.toolCalls.length))) return "—";
     var q = s.qualityScore == null ? 100 : s.qualityScore;
-    var reasons = (s.qualityReasons || []).join(" · ");
-    return '<span class="q-badge ' + qualityCls(q) + '" title="' + esc(reasons) + '">' + q + " · " + esc(s.qualityLabel || "") + "</span>";
+    return '<span class="q-badge ' + qualityCls(q) + ' q-click" id="ovQuality" role="button" tabindex="0" title="See how this score is computed">' + q + " · " + esc(s.qualityLabel || "") + ' <span class="q-badge-i">?</span></span>';
+  }
+  // showQuality opens the per-task breakdown: how the score was computed, cost
+  // alongside it, and an honest note on what it does and doesn't measure.
+  function showQuality(s) {
+    var q = s.qualityScore == null ? 100 : s.qualityScore;
+    var factors = s.qualityFactors || [];
+    var perM = s.tokensTotal > 0 ? "$" + (s.costUsd / (s.tokensTotal / 1e6)).toFixed(2) + " /M tok" : "";
+    var rows = factors.map(function (f) {
+      return '<div class="q-row ' + (f.ok ? "ok" : "bad") + '">' +
+        '<span class="q-row-ic">' + (f.ok ? "✓" : "−" + f.penalty) + "</span>" +
+        '<span class="q-row-main"><b>' + esc(f.name) + "</b><span>" + esc(f.detail) + "</span></span></div>";
+    }).join("");
+    var note = "<b>What this is:</b> a read on how the run went — looping, retries needed to pass checks, and stalls — from signals rook already tracks. " +
+      "<b>What it is not:</b> a check that the output is correct (there is no LLM judge here). A 100 means nothing went visibly wrong, not that the work is verified. " +
+      "For real pass/fail and review signals, turn on Auto-verify and Review passes in Settings.";
+    var body = '<div class="q-detail">' +
+      '<div class="q-hero"><div class="q-score ' + qualityCls(q) + '">' + q + "</div>" +
+        '<div class="q-hero-lab"><b>' + esc(s.qualityLabel || "") + "</b><span>work-quality score</span></div>" +
+        '<div class="q-cost"><div class="qc-v">' + fmtUSD(s.costUsd) + '</div><div class="qc-k">cost' + (perM ? " · " + esc(perM) : "") + "</div></div></div>" +
+      '<div class="q-formula">Starts at <b>100</b>; each detected problem subtracts points.</div>' +
+      '<div class="q-rows">' + rows + "</div>" +
+      '<div class="q-note">' + note + "</div></div>";
+    modal("Quality · " + (s.title || s.project || "task"), body);
   }
   // Claude's context window is ~200k by default, or ~1M with the long-context
   // beta. rook can't read the setting, so it infers the window as a per-MODEL

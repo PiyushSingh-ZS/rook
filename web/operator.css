@@ -572,3 +572,30 @@ select.set-in { cursor: pointer; }
 .q-badge.ok { color:var(--ok); }
 .q-badge.warn { color:var(--busy); }
 .q-badge.crit { color:var(--danger); }
+
+/* quality badge click affordance + breakdown modal */
+.q-badge.q-click { cursor: pointer; }
+.q-badge.q-click:hover { filter: brightness(1.05); }
+.q-badge-i { display:inline-block; width:13px; height:13px; line-height:13px; text-align:center; border:1px solid currentColor; border-radius:50%; font-size:9px; opacity:.8; }
+.q-detail { display:flex; flex-direction:column; gap:14px; }
+.q-hero { display:flex; align-items:center; gap:16px; }
+.q-score { font-family:var(--mono); font-size:34px; font-weight:700; line-height:1; width:74px; height:64px; display:flex; align-items:center; justify-content:center; border:2px solid currentColor; border-radius:12px; }
+.q-score.ok { color:var(--ok); } .q-score.warn { color:var(--busy); } .q-score.crit { color:var(--danger); }
+.q-hero-lab { display:flex; flex-direction:column; }
+.q-hero-lab b { font-size:16px; color:var(--ink); text-transform:capitalize; }
+.q-hero-lab span { font-size:12px; color:var(--ink-4); }
+.q-cost { margin-left:auto; text-align:right; }
+.q-cost .qc-v { font-family:var(--mono); font-size:18px; color:var(--ink); }
+.q-cost .qc-k { font-size:11px; color:var(--ink-4); }
+.q-formula { font-size:12px; color:var(--ink-3); }
+.q-rows { display:flex; flex-direction:column; gap:8px; }
+.q-row { display:flex; align-items:flex-start; gap:11px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; }
+.q-row.ok { border-left:3px solid var(--ok); }
+.q-row.bad { border-left:3px solid var(--danger); background:var(--surface-2); }
+.q-row-ic { font-family:var(--mono); font-size:12px; font-weight:700; min-width:26px; }
+.q-row.ok .q-row-ic { color:var(--ok); } .q-row.bad .q-row-ic { color:var(--danger); }
+.q-row-main { display:flex; flex-direction:column; gap:2px; }
+.q-row-main b { font-size:13px; color:var(--ink); }
+.q-row-main span { font-size:12px; color:var(--ink-3); }
+.q-note { font-size:12px; line-height:1.6; color:var(--ink-3); background:var(--surface-2); border:1px solid var(--line); border-radius:9px; padding:11px 13px; }
+.q-note b { color:var(--ink-2); }
