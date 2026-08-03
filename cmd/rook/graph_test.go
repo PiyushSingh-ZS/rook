@@ -136,3 +136,41 @@ func TestGraphSkipPropagation(t *testing.T) {
 		t.Fatalf("graph should be done after all nodes terminal")
 	}
 }
+
+func TestGraphDependsOnNormalization(t *testing.T) {
+	// mirrors handleGraphCreate's id + dependsOn normalization: a node name with a
+	// space becomes a sanitized id, and edges referencing the raw name must resolve.
+	idMap := map[string]string{}
+	nodes := []struct{ id, name string }{{"", "draft plan"}, {"", "ship"}}
+	g := &taskGraph{}
+	for i, rn := range nodes {
+		nid := safeName(firstNonEmpty(rn.id, rn.name, ""))
+		if rn.id != "" {
+			idMap[rn.id] = nid
+		}
+		if rn.name != "" {
+			idMap[rn.name] = nid
+		}
+		idMap[nid] = nid
+		var deps []graphDep
+		if i == 1 {
+			deps = []graphDep{{Node: "draft plan", On: "pass"}} // raw reference with a space
+		}
+		g.Nodes = append(g.Nodes, &graphNode{ID: nid, Name: rn.name, DependsOn: deps})
+	}
+	for _, n := range g.Nodes {
+		for j := range n.DependsOn {
+			ref := n.DependsOn[j].Node
+			if m, ok := idMap[ref]; ok {
+				n.DependsOn[j].Node = m
+			} else {
+				n.DependsOn[j].Node = safeName(ref)
+			}
+		}
+	}
+	// the "ship" node's edge must now resolve to the sanitized "draft-plan" id
+	ship := g.Nodes[1]
+	if nodeByID(g, ship.DependsOn[0].Node) == nil {
+		t.Fatalf("edge %q did not resolve after normalization; ids=%v", ship.DependsOn[0].Node, []string{g.Nodes[0].ID, g.Nodes[1].ID})
+	}
+}

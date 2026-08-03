@@ -932,6 +932,12 @@
         '</div><div id="insTrend"></div></div>' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by project</div></div><div id="insProjects"></div></div>' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Top runs by cost</div><div class="ins-card-meta">' + runs.length + ' runs</div></div><div id="insRuns"></div></div>' +
+      "</div>" +
+      '<div class="ins-sec-title">Quality &amp; cost per session</div>' +
+      '<div class="ins-qtiles" id="insQTiles"></div>' +
+      '<div class="ins-grid">' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Quality by session</div><div class="ins-card-meta">0–100 · higher is better</div></div><div id="insQualBar"></div></div>' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by session</div></div><div id="insCostBar"></div></div>' +
       "</div>";
     // per-project cost, aggregated from the live session list (complete, not just top runs)
     var worked = function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); };
@@ -967,6 +973,26 @@
     if (window.rookCharts) {
       window.rookCharts.donut($("insDonut"), { slices: models.map(function (m) { return { label: shortModel(m.model) || "—", value: m.costUsd || 0 }; }), format: fmtUSD });
       renderInsTrend();
+    }
+    // Quality & cost per session — tiles + two bar charts over the top sessions
+    var qWorked = sessions().filter(function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); });
+    var qScore = function (s) { return s.qualityScore == null ? 100 : s.qualityScore; };
+    var qColor = function (v) { return v >= 85 ? "var(--ok)" : v >= 60 ? "var(--busy)" : "var(--danger)"; };
+    var qLabel = function (s) { return (s.title || s.project || "session").slice(0, 26); };
+    var qTop = qWorked.slice().sort(function (a, b) { return (b.costUsd || 0) - (a.costUsd || 0); }).slice(0, 8);
+    if ($("insQTiles")) {
+      var scores = qWorked.map(qScore);
+      var avgQ = scores.length ? Math.round(scores.reduce(function (a, b) { return a + b; }, 0) / scores.length) : 0;
+      var pctExc = scores.length ? Math.round(scores.filter(function (v) { return v >= 85; }).length / scores.length * 100) : 0;
+      var risk = scores.filter(function (v) { return v < 50; }).length;
+      $("insQTiles").innerHTML =
+        '<div class="ins-qtile"><div class="qt-v ' + (avgQ >= 85 ? "ok" : avgQ >= 60 ? "warn" : "crit") + '">' + avgQ + '</div><div class="qt-k">avg quality</div></div>' +
+        '<div class="ins-qtile"><div class="qt-v">' + pctExc + '%</div><div class="qt-k">excellent</div></div>' +
+        '<div class="ins-qtile"><div class="qt-v ' + (risk ? "crit" : "") + '">' + risk + '</div><div class="qt-k">at risk</div></div>';
+    }
+    if (window.rookCharts && $("insQualBar")) {
+      window.rookCharts.barChart($("insQualBar"), { series: qTop.map(function (s) { var v = qScore(s); return { label: qLabel(s), value: v, sub: s.qualityLabel || "", color: qColor(v) }; }), format: function (v) { return String(Math.round(v)); } });
+      window.rookCharts.barChart($("insCostBar"), { series: qTop.map(function (s) { return { label: qLabel(s), value: s.costUsd || 0, sub: shortModel(s.model) || "" }; }), format: fmtUSD });
     }
   }
 

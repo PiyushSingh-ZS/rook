@@ -399,12 +399,23 @@ func handleGraphCreate(ctx *gofr.Context) (any, error) {
 	id := fmt.Sprintf("graph-%d", atomic.AddInt64(&graphSeq, 1))
 	g := &taskGraph{ID: id, Title: firstNonEmpty(req.Title, "graph"), CWD: req.CWD, Worktree: req.Worktree, Created: time.Now().UnixMilli(), Updated: time.Now().UnixMilli()}
 	seen := map[string]bool{}
+	// idMap maps every way a node might be referenced (its raw id, its raw name,
+	// and the sanitized id) to the final sanitized id, so dependsOn edges resolve
+	// even when a node name has spaces/punctuation that safeName rewrites.
+	idMap := map[string]string{}
 	for i, rn := range req.Nodes {
 		nid := safeName(firstNonEmpty(rn.ID, rn.Name, fmt.Sprintf("n%d", i+1)))
 		if seen[nid] {
 			nid = fmt.Sprintf("%s-%d", nid, i+1)
 		}
 		seen[nid] = true
+		if rn.ID != "" {
+			idMap[rn.ID] = nid
+		}
+		if rn.Name != "" {
+			idMap[rn.Name] = nid
+		}
+		idMap[nid] = nid
 		typ := rn.Type
 		if typ != "approval" {
 			typ = "agent"
@@ -414,6 +425,18 @@ func handleGraphCreate(ctx *gofr.Context) (any, error) {
 			Verify: rn.Verify, DependsOn: rn.DependsOn, Status: "pending",
 			Session: fmt.Sprintf("%s-%s", id, nid),
 		})
+	}
+	// normalize dependsOn references through the same mapping (idMap first, then
+	// safeName as a fallback) so they point at the sanitized node ids.
+	for _, n := range g.Nodes {
+		for j := range n.DependsOn {
+			ref := n.DependsOn[j].Node
+			if mapped, ok := idMap[ref]; ok {
+				n.DependsOn[j].Node = mapped
+			} else {
+				n.DependsOn[j].Node = safeName(ref)
+			}
+		}
 	}
 	// validate edges point at real nodes
 	for _, n := range g.Nodes {
