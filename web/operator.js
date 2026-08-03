@@ -208,7 +208,7 @@
   // shared helpers handed to plug-in views (operator-*.js) so they render with
   // the exact same formatting + toasts and never invent their own.
   function opCtx() {
-    return { el: el, esc: esc, fmtTokens: fmtTokens, fmtUSD: fmtUSD, ago: ago, shortModel: shortModel, statusOf: statusOf, icon: I, now: now, toast: toast, charts: window.rookCharts, selectAgent: function (id) { setView("operator"); selectAgent(id); }, launch: function (prefill) { newAgent(prefill); }, resolveRepo: resolveRepoPath, rememberRepo: rememberRepoPath, getRepos: function () { return repoList; } };
+    return { el: el, esc: esc, fmtTokens: fmtTokens, fmtUSD: fmtUSD, ago: ago, shortModel: shortModel, statusOf: statusOf, icon: I, now: now, toast: toast, charts: window.rookCharts, selectAgent: function (id) { setView("operator"); selectAgent(id); }, launch: function (prefill) { newAgent(prefill); }, launchGraph: function () { newGraph(); }, resolveRepo: resolveRepoPath, rememberRepo: rememberRepoPath, getRepos: function () { return repoList; } };
   }
 
   function pickDefault() {
@@ -234,7 +234,7 @@
 
   // registry for plug-in views (operator-<name>.js register window.OP_VIEWS[name])
   window.OP_VIEWS = window.OP_VIEWS || {};
-  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace" };
+  var TITLES = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", settings: "Settings", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace" };
   var extRender = null; // active plug-in view's render() for live refresh on poll
 
   function setView(v) {
@@ -1092,6 +1092,48 @@
         });
       });
   }
+  // Build a task GRAPH (DAG) — nodes with conditional edges + approval gates.
+  // One node per line: name | type | dependsOn | prompt
+  //   type       = agent (default) or approval
+  //   dependsOn  = comma-sep "node:on"  (on = pass | fail | done; default pass)
+  function parseGraphNodes(text) {
+    var nodes = [];
+    text.split("\n").forEach(function (line) {
+      var l = line.trim(); if (!l) return;
+      var parts = l.split("|").map(function (x) { return x.trim(); });
+      var name = parts[0]; if (!name) return;
+      var type = (parts[1] || "agent").toLowerCase() === "approval" ? "approval" : "agent";
+      var deps = (parts[2] || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean).map(function (d) {
+        var kv = d.split(":"); return { node: kv[0].trim(), on: (kv[1] || "pass").trim() };
+      });
+      var verify = false, prompt = parts.slice(3).join("|").trim();
+      if (/^verify\b/i.test(prompt)) { verify = true; prompt = prompt.replace(/^verify\s*/i, ""); }
+      nodes.push({ id: name, name: name, type: type, verify: verify, dependsOn: deps, prompt: prompt });
+    });
+    return nodes;
+  }
+  function newGraph() {
+    modal("New task graph",
+      '<label class="set-field"><span class="set-k">Graph title</span><input class="set-in" id="gr_title" placeholder="ship feature X safely" /></label>' +
+      '<label class="set-field"><span class="set-k">Working directory</span><input class="set-in" id="gr_cwd" list="grRepoDL" placeholder="start typing a repo name…" />' + repoDatalist("grRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Nodes — one per line: <code>name | type | dependsOn | prompt</code></span><textarea class="set-in" id="gr_nodes" rows="7" spellcheck="false" placeholder="plan | agent |  | draft a plan for X&#10;approve | approval | plan:pass |&#10;build | agent | approve:pass | implement the plan&#10;test | agent | build:pass | verify run tests and fix failures&#10;rollback | agent | test:fail | revert the change and explain why"></textarea></label>' +
+      '<div class="set-hint" style="margin:-6px 0 8px">type = <b>agent</b> or <b>approval</b>; dependsOn = <b>node:on</b> (on = pass·fail·done); prefix a prompt with <b>verify</b> to gate on the build/test result.</div>' +
+      '<label class="set-toggle"><input type="checkbox" id="gr_wt" checked /><span><b>Isolate in a git worktree</b></span></label>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="gr_go">' + I.plus + "Create graph</button></div>",
+      function (ov, close) {
+        setTimeout(function () { $("gr_cwd").focus(); }, 30);
+        $("gr_go").addEventListener("click", async function () {
+          var cwd = $("gr_cwd").value.trim(), nodes = parseGraphNodes($("gr_nodes").value);
+          if (!cwd || !nodes.length) { toast("cwd and at least one node required", "err"); return; }
+          try {
+            var r = await fetch("/api/graph", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("gr_title").value, cwd: cwd, worktree: $("gr_wt").checked, nodes: nodes }) });
+            var d = await r.json(); if (d && d.data) d = d.data;
+            if (!r.ok) { toast((d && (d.error && (d.error.message || d.error) || d.message)) || "Create failed", "err"); return; }
+            toast("Task graph started", "ok"); close(); setView("graph");
+          } catch (e) { toast("Graph create failed", "err"); }
+        });
+      });
+  }
   // launch an agent straight from a Linear/Jira/GitHub ticket — rook fetches the
   // ticket and builds the task prompt, so you paste an id, not write a brief.
   function newFromTicket() {
@@ -1139,6 +1181,8 @@
       { g: "Action", title: "Launch agent…", sub: "start a new agent", run: newAgent },
       { g: "Action", title: "New agent from a ticket…", sub: "Linear / Jira / GitHub issue", run: newFromTicket },
       { g: "Action", title: "New task chain…", sub: "sequential agents", run: createChain },
+      { g: "Action", title: "New task graph…", sub: "DAG · conditional edges · approval gates", run: newGraph },
+      { g: "Go", title: "Task graphs", sub: "DAG orchestration", key: "G T", run: function () { setView("graph"); } },
       { g: "Go", title: "Operator", sub: "workspace console", key: "G O", run: function () { setView("operator"); } },
       { g: "Go", title: "Insights", sub: "usage · cost · trends", key: "G I", run: function () { setView("insights"); } },
       { g: "Go", title: "Board", sub: "kanban by state", key: "G B", run: function () { setView("board"); } },
@@ -1208,7 +1252,7 @@
     if (rows[i]) { selectAgent(rows[i]); var b = document.querySelector('.op-agent[data-id="' + rows[i] + '"]'); b && b.scrollIntoView({ block: "nearest" }); }
   }
   // g-prefix jump targets (g o, g i, …) — one per view.
-  var GO_KEYS = { o: "operator", i: "insights", b: "board", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
+  var GO_KEYS = { o: "operator", i: "insights", b: "board", t: "graph", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
   function showShortcuts() {
     var rows = [
       ["⌘K", "command palette — search agents, jump, run a command"],

@@ -182,6 +182,7 @@ func onSessionFinished(cwd string) {
 		}
 	}
 	advanceChainsForCWD(cwd) // hand off to the next chain step, if any
+	advanceGraphsForCWD(cwd) // and to the next DAG node, if any
 
 	c := loadConfig()
 	if c.AutoReview {

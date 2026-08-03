@@ -39,6 +39,7 @@ func main() {
 	if err := initDB(); err != nil {
 		log.Printf("summary store disabled: %v", err)
 	}
+	loadGraphs() // restore checkpointed task graphs so runs survive a restart
 	if *notifyOn {
 		startNotifier(3 * time.Second)
 	}
@@ -60,7 +61,7 @@ func main() {
 	app.GET("/operator.html", staticHandler("operator.html", "text/html; charset=utf-8"))
 	app.GET("/operator.css", staticHandler("operator.css", "text/css; charset=utf-8"))
 	app.GET("/operator.js", staticHandler("operator.js", "text/javascript; charset=utf-8"))
-	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace"} {
+	for _, v := range []string{"github", "summaries", "dev", "audit", "workspace", "graph"} {
 		name := "operator-" + v + ".js"
 		app.GET("/"+name, staticHandler(name, "text/javascript; charset=utf-8"))
 	}
@@ -132,6 +133,11 @@ func main() {
 	app.POST("/api/chain", handleChainCreate)
 	app.GET("/api/chains", handleChains)
 	app.POST("/api/chain/advance", handleChainAdvance)
+	app.POST("/api/graph", handleGraphCreate)
+	app.GET("/api/graphs", handleGraphs)
+	app.POST("/api/graph/approve", handleGraphApprove)
+	app.POST("/api/graph/advance", handleGraphAdvance)
+	app.DELETE("/api/graph", handleGraphDelete)
 	app.POST("/api/pr/create", handlePRCreate)
 	app.POST("/api/pr/merge", handlePRMerge)
 	app.POST("/api/webhook/test", handleWebhookTest)

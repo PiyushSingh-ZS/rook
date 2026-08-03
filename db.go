@@ -66,6 +66,9 @@ func initDB() error {
 	if _, err := d.Exec(reviewCommentsSchema); err != nil {
 		return err
 	}
+	if _, err := d.Exec(graphsSchema); err != nil {
+		return err
+	}
 	db = d
 	return nil
 }
