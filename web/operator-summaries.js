@@ -64,6 +64,7 @@
         openContent = s.content || "";
         openError = null;
         loadedOpenId = id;
+        if (refs) refs.paintedKey = null; // force a repaint for a freshly (re)loaded body
         paintOpen(ctx);
         paintList(ctx); // reflect selection highlight
       })
@@ -406,11 +407,21 @@
         "<div class='t'>Select a summary to read it</div>" +
         "<div class='h'>Pick one from the list on the left.</div></div>";
       loadedOpenId = null;
+      refs.paintedKey = null;
       return;
     }
     var s = null;
     for (var i = 0; i < data.length; i++) { if (data[i].id === openId) { s = data[i]; break; } }
     refs.title.textContent = s ? (s.start + (s.end && s.end !== s.start ? " → " + s.end : "")) : "Summary";
+
+    // Only rebuild the actions + body when the open summary or its content actually
+    // changed. paintOpen fires on every 2s poll while a summary is open; blindly
+    // re-setting body.innerHTML each time would wipe the user's text selection
+    // mid-drag (they could never select-and-copy). Key on id + load/error state +
+    // content length so a real change still repaints.
+    var paintKey = openId + ":" + (openError ? "err" : loadedOpenId !== openId ? "loading" : (openContent ? openContent.length : 0));
+    if (refs.paintedKey === paintKey) return;
+    refs.paintedKey = paintKey;
 
     // action buttons (rebuilt only when the open item changes)
     refs.actions.innerHTML =
