@@ -20,6 +20,7 @@ type Config struct {
 	HooksGate       bool   `json:"hooksGate"`       // PreToolUse gate: block clearly-destructive commands
 	AutoReview      bool   `json:"autoReview"`      // spawn a review subagent when a session finishes with changes
 	AutoVerify      bool   `json:"autoVerify"`      // run the project's build/test command when a session finishes
+	AutoCompact     bool   `json:"autoCompact"`     // tell an agent to /compact when its context nears the limit
 	MaxReflectIterations int `json:"maxReflectIterations"` // Reflexion retry cap on AutoVerify failure; 0 = default (3)
 	// integration hub (phase 4) — all opt-in, empty = disabled
 	AllowWrite     bool   `json:"allowWrite"`     // enable PR create/merge write-actions to GitHub

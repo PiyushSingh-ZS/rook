@@ -32,6 +32,7 @@
     diff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7M18 9v6"/><circle cx="18" cy="6" r="2.5"/><path d="M12 6h3.5"/></svg>',
     trace: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
     resume: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>',
+    note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg>',
     external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>',
@@ -320,7 +321,8 @@
     ["diff", "Diff", I.diff],
     ["trace", "Trace", I.trace],
     ["files", "Files", I.file],
-    ["find", "Find", I.search]
+    ["find", "Find", I.search],
+    ["notes", "Notes", I.note]
   ];
   function teardownTerm() { if (ws.term) { try { ws.term.ws && ws.term.ws.close(); } catch (e) {} try { ws.term.xt && ws.term.xt.dispose(); } catch (e) {} try { ws.term.ro && ws.term.ro.disconnect(); } catch (e) {} ws.term = null; } }
 
@@ -369,6 +371,7 @@
         '<div class="ws-panel" id="wsTrace"></div>' +
         '<div class="ws-panel" id="wsFiles"></div>' +
         '<div class="ws-panel" id="wsFind"></div>' +
+        '<div class="ws-panel" id="wsNotes"></div>' +
         '<div class="ws-panel" id="wsContext"></div>' +
       "</div>";
     host.querySelectorAll(".ws-tab").forEach(function (b) { b.addEventListener("click", function () { switchTab(b.dataset.tab); }); });
@@ -381,7 +384,7 @@
 
   function switchTab(tab) { ws.tab = tab; document.querySelectorAll(".ws-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === tab); }); activateTab(tab); }
   function activateTab(tab) {
-    var map = { overview: "wsOverview", terminal: "wsTerm", diff: "wsDiff", trace: "wsTrace", files: "wsFiles", find: "wsFind", context: "wsContext" };
+    var map = { overview: "wsOverview", terminal: "wsTerm", diff: "wsDiff", trace: "wsTrace", files: "wsFiles", find: "wsFind", notes: "wsNotes", context: "wsContext" };
     Object.keys(map).forEach(function (k) { var p = $(map[k]); if (p) p.classList.toggle("on", k === tab); });
     if (tab === "overview") renderOverview();
     else if (tab === "files") renderFiles();
@@ -389,6 +392,7 @@
     else if (tab === "diff") loadDiff();
     else if (tab === "terminal") openTermTab();
     else if (tab === "find") renderFind();
+    else if (tab === "notes") renderNotes();
     else if (tab === "context") renderContext();
   }
 
@@ -488,9 +492,12 @@
     if (s.contextTokens > 0) {
       var ctx = s.contextTokens, lim = ctxLimit(s.model, ctx), pct = lim ? Math.min(100, Math.round(ctx / lim * 100)) : 0;
       var cls = pct >= 85 ? "crit" : pct >= 60 ? "warn" : "ok";
-      h += '<div class="ov-ctx"><div class="ov-ctx-head"><span class="ov-ctx-k">Context window</span><span class="ov-ctx-v mono">' + fmtTokens(ctx) + " / ~" + fmtTokens(lim) + " · " + pct + "% full</span></div>" +
+      h += '<div class="ov-ctx"><div class="ov-ctx-head"><span class="ov-ctx-k">Context window</span>' +
+        '<span class="ov-ctx-right"><span class="ov-ctx-v mono">' + fmtTokens(ctx) + " / ~" + fmtTokens(lim) + " · " + pct + "% full</span>" +
+          (s.controllable && s.tmuxPane ? '<button class="btn xs ov-compact-btn" id="ovCompact" title="Tell the agent to compact its context (/compact)">Compact</button>' : "") +
+        "</span></div>" +
         '<div class="ov-ctx-bar"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
-        (pct >= 85 ? '<div class="ov-ctx-hint">near the limit — the agent may compact its context soon</div>' : "") + "</div>";
+        (pct >= 85 ? '<div class="ov-ctx-hint">near the limit — compact to free the window before recall degrades</div>' : "") + "</div>";
     }
     var changed = (s.changedFiles || []).length;
     var health = s.health ? (s.health.level === "alert" ? "⚠ " : "") + (s.health.reason || s.health.level) : "healthy";
@@ -528,6 +535,12 @@
       send.addEventListener("click", doSend);
       ta.addEventListener("keydown", function (e) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doSend(); } });
     }
+    $("ovCompact") && $("ovCompact").addEventListener("click", function () {
+      fetch("/api/compact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: (j && j.data) || j }; }); })
+        .then(function (res) { toast(res.ok ? "Sent /compact to the agent" : (resumeErr(res.j) || "Couldn't compact"), res.ok ? "ok" : "err"); })
+        .catch(function () { toast("Couldn't compact", "err"); });
+    });
     $("ovAllow") && $("ovAllow").addEventListener("click", function () { respond(s.sessionId, "allow", ""); toast("Allowed", "ok"); });
     $("ovDeny") && $("ovDeny").addEventListener("click", function () { respond(s.sessionId, "deny", ""); toast("Denied", ""); });
     p.querySelectorAll("[data-key]").forEach(function (b) {
@@ -725,6 +738,41 @@
     });
   }
 
+  // ---- Notes: a durable per-run scratchpad (kept outside the context window) -
+  function renderNotes() {
+    var p = $("wsNotes"); if (!p) return;
+    var s = findAgent(selectedId); if (!s) return;
+    if (p.dataset.for === selectedId) { var ta0 = $("wsNotesTA"); ta0 && ta0.focus(); return; } // build once; keep the textarea across polls
+    p.dataset.for = selectedId;
+    p.innerHTML =
+      '<div class="ws-notes">' +
+        '<div class="ws-notes-head"><span class="ws-notes-k">Scratchpad</span>' +
+          '<span class="ws-notes-status" id="wsNotesStatus">durable notes for this run — kept outside the context window</span>' +
+          (s.controllable && s.tmuxPane ? '<button class="btn xs" id="wsNotesSend" title="Paste these notes to the agent as context">Send to agent</button>' : "") +
+        "</div>" +
+        '<textarea class="ws-notes-ta" id="wsNotesTA" placeholder="Jot durable context, decisions, TODOs… autosaved, survives restart."></textarea>' +
+      "</div>";
+    var ta = $("wsNotesTA"), status = $("wsNotesStatus"), idleMsg = "durable notes for this run — kept outside the context window";
+    fetch("/api/scratchpad?sessionId=" + encodeURIComponent(s.sessionId), { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.data) j = j.data; if (p.dataset.for === selectedId && document.activeElement !== ta) ta.value = (j && j.content) || ""; })
+      .catch(function () {});
+    var timer = null;
+    ta.addEventListener("input", function () {
+      clearTimeout(timer); status.textContent = "saving…";
+      timer = setTimeout(function () {
+        fetch("/api/scratchpad", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId, content: ta.value }) })
+          .then(function (r) { status.textContent = r.ok ? "saved ✓" : "save failed"; setTimeout(function () { if (status) status.textContent = idleMsg; }, 1600); })
+          .catch(function () { status.textContent = "save failed"; });
+      }, 500);
+    });
+    $("wsNotesSend") && $("wsNotesSend").addEventListener("click", function () {
+      if (!ta.value.trim()) { toast("Nothing to send", ""); return; }
+      respond(s.sessionId, "text", "Notes for context:\n" + ta.value.trim()); toast("Sent notes to agent", "ok");
+    });
+    setTimeout(function () { ta.focus(); }, 30);
+  }
+
   function openTermTab() {
     var p = $("wsTerm"); if (!p) return;
     var s = findAgent(selectedId); if (!s || !s.controllable || !s.tmuxPane) { p.innerHTML = '<div class="op-empty">' + I.terminal + '<div class="t">This agent has no attachable terminal</div></div>'; return; }
@@ -885,6 +933,7 @@
           toggle("Destructive-command gate", "hooksGate", cfg.hooksGate, "block clearly-dangerous commands via the PreToolUse hook") +
           toggle("Auto-review on finish", "autoReview", cfg.autoReview, "spawn a review subagent when a session ends with changes") +
           toggle("Auto-verify (build/test) on finish", "autoVerify", cfg.autoVerify, "run the project's test/build command when a session ends") +
+          toggle("Auto-compact near context limit", "autoCompact", cfg.autoCompact, "tell an idle agent to /compact when its context passes ~85%") +
           toggle("Allow write actions", "allowWrite", cfg.allowWrite, "enable PR create/merge to GitHub") +
           field("Max reflect iterations", "maxReflectIterations", cfg.maxReflectIterations || "", "3", "number") +
         "</div>" +
@@ -914,7 +963,7 @@
         "</div>" +
       "</div>" +
       '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="btn primary" id="setSave">' + I.check + 'Save settings</button><span id="setSaved" class="mono" style="color:var(--ok);font-size:12px"></span></div>';
-    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
+    var cfgKeys = { ntfy: 1, summaryAuthor: 1, summaryRepos: 1, summaryCwd: 1, summarySchedule: 1, summaryModel: 1, hooksGate: 1, autoReview: 1, autoVerify: 1, autoCompact: 1, maxReflectIterations: 1, allowWrite: 1, slackWebhook: 1, discordWebhook: 1, editor: 1, linearToken: 1, jiraBase: 1, jiraEmail: 1, jiraToken: 1 };
     $("setSave").addEventListener("click", async function () {
       var out = {};
       Object.keys(cfgKeys).forEach(function (k) {

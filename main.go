@@ -43,6 +43,7 @@ func main() {
 		startNotifier(3 * time.Second)
 	}
 	startSummaryScheduler("http://127.0.0.1:" + port)
+	startAutoCompact()
 	startAuditIngester(60 * time.Second)
 
 	app := gofr.New()
@@ -115,6 +116,9 @@ func main() {
 	app.POST("/api/review/comment/state", handleReviewCommentState)
 	app.POST("/api/review/comment/send", handleSendReviewComment)
 	app.DELETE("/api/review/comment", handleDeleteReviewComment)
+	app.POST("/api/compact", handleCompact)
+	app.GET("/api/scratchpad", handleScratchpadGet)
+	app.POST("/api/scratchpad", handleScratchpadPost)
 	app.GET("/api/claude-activity", handleClaudeActivity)
 	app.GET("/api/repos", handleRepos)
 	app.GET("/api/diff", handleDiff)
