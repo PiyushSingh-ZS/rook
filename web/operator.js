@@ -508,6 +508,7 @@
       stat("Version", esc(s.version || "—")) +
       stat("Tokens", fmtTokens(s.tokensTotal) + " total") +
       stat("Cost (est)", fmtUSD(s.costUsd)) +
+      stat("Quality", qualityHTML(s)) +
       stat("Last 5h / 7d", fmtTokens(s.tokens5h) + " / " + fmtTokens(s.tokens7d)) +
       stat("Running for", s.startedAt ? ago(s.startedAt, now()) : "—") +
       stat("Updated", ago(s.updatedAt, now()) + " ago") +
@@ -548,6 +549,15 @@
     });
   }
   function stat(k, v, wrap) { return '<div class="ov-stat"><div class="k">' + k + '</div><div class="v' + (wrap ? " wrap" : "") + '">' + v + "</div></div>"; }
+  // qualityHTML renders the per-task work-quality badge (score + label), colored,
+  // with the contributing reasons as a tooltip. "—" until the agent has done work.
+  function qualityCls(q) { return q >= 85 ? "ok" : q >= 70 ? "warn" : q >= 50 ? "warn" : "crit"; }
+  function qualityHTML(s) {
+    if (!(s.tokensTotal > 0 || (s.toolCalls && s.toolCalls.length))) return "—";
+    var q = s.qualityScore == null ? 100 : s.qualityScore;
+    var reasons = (s.qualityReasons || []).join(" · ");
+    return '<span class="q-badge ' + qualityCls(q) + '" title="' + esc(reasons) + '">' + q + " · " + esc(s.qualityLabel || "") + "</span>";
+  }
   // Claude's context window is ~200k by default, or ~1M with the long-context
   // beta. rook can't read the setting, so it infers the window as a per-MODEL
   // property: if ANY session on a model has read >200k tokens, that model is on
@@ -858,22 +868,27 @@
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Top runs by cost</div><div class="ins-card-meta">' + runs.length + ' runs</div></div><div id="insRuns"></div></div>' +
       "</div>";
     // per-project cost, aggregated from the live session list (complete, not just top runs)
+    var worked = function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); };
+    var qAvgHTML = function (sum, n) { if (!n) return "—"; var q = Math.round(sum / n); return '<span class="q-badge ' + qualityCls(q) + '">' + q + "</span>"; };
     var byProj = {};
-    sessions().forEach(function (s) { var p = s.project || "—"; if (!byProj[p]) byProj[p] = { agents: 0, tok: 0, cost: 0 }; byProj[p].agents++; byProj[p].tok += s.tokensTotal || 0; byProj[p].cost += s.costUsd || 0; });
-    var projRows = Object.keys(byProj).map(function (p) { return { p: p, agents: byProj[p].agents, tok: byProj[p].tok, cost: byProj[p].cost }; })
+    sessions().forEach(function (s) { var p = s.project || "—"; if (!byProj[p]) byProj[p] = { agents: 0, tok: 0, cost: 0, qsum: 0, qn: 0 }; byProj[p].agents++; byProj[p].tok += s.tokensTotal || 0; byProj[p].cost += s.costUsd || 0; if (worked(s) && s.qualityScore != null) { byProj[p].qsum += s.qualityScore; byProj[p].qn++; } });
+    var projRows = Object.keys(byProj).map(function (p) { return { p: p, agents: byProj[p].agents, tok: byProj[p].tok, cost: byProj[p].cost, qsum: byProj[p].qsum, qn: byProj[p].qn }; })
       .filter(function (r) { return r.tok > 0 || r.cost > 0; }).sort(function (a, b) { return b.cost - a.cost; });
-    var maxProjCost = Math.max.apply(null, projRows.map(function (r) { return r.cost; }).concat([0.0001]));
     if ($("insProjects")) $("insProjects").innerHTML = projRows.length
-      ? '<table class="ins-mtable"><thead><tr><th>Project</th><th>Agents</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>' +
+      ? '<table class="ins-mtable"><thead><tr><th>Project</th><th>Agents</th><th>Tokens</th><th>Quality</th><th>Cost</th></tr></thead><tbody>' +
         projRows.slice(0, 10).map(function (r) {
-          return "<tr><td class=mn>" + esc(r.p) + "</td><td class=n>" + r.agents + "</td><td class=n>" + fmtTokens(r.tok) + '</td><td class="n cost">' + fmtUSD(r.cost) + "</td></tr>";
+          return "<tr><td class=mn>" + esc(r.p) + "</td><td class=n>" + r.agents + "</td><td class=n>" + fmtTokens(r.tok) + '</td><td class="n">' + qAvgHTML(r.qsum, r.qn) + '</td><td class="n cost">' + fmtUSD(r.cost) + "</td></tr>";
         }).join("") + "</tbody></table>"
       : '<div class="op-empty">No project cost yet</div>';
+    // avg quality per model (from the live session list) to pair with cost-by-model
+    var qByModel = {};
+    sessions().forEach(function (s) { if (!worked(s) || s.qualityScore == null) return; var m = shortModel(s.model) || "—"; if (!qByModel[m]) qByModel[m] = { sum: 0, n: 0 }; qByModel[m].sum += s.qualityScore; qByModel[m].n++; });
     var perMtok = function (m) { var mt = (m.tokensTotal || 0) / 1e6; return mt > 0.0001 ? "$" + (m.costUsd / mt).toFixed(2) : "—"; };
     $("insModels").innerHTML = models.length
-      ? '<table class="ins-mtable"><thead><tr><th>Model</th><th>Sessions</th><th>Tokens</th><th>$/M tok</th><th>Cost</th></tr></thead><tbody>' +
+      ? '<table class="ins-mtable"><thead><tr><th>Model</th><th>Sessions</th><th>Tokens</th><th>$/M tok</th><th>Quality</th><th>Cost</th></tr></thead><tbody>' +
         models.map(function (m) {
-          return "<tr><td class=mn>" + esc(shortModel(m.model) || "—") + "</td><td class=n>" + (m.sessions || 0) + "</td><td class=n>" + fmtTokens(m.tokensTotal) + "</td><td class=n>" + perMtok(m) + '</td><td class="n cost">' + fmtUSD(m.costUsd) + "</td></tr>";
+          var qm = qByModel[shortModel(m.model) || "—"] || { sum: 0, n: 0 };
+          return "<tr><td class=mn>" + esc(shortModel(m.model) || "—") + "</td><td class=n>" + (m.sessions || 0) + "</td><td class=n>" + fmtTokens(m.tokensTotal) + "</td><td class=n>" + perMtok(m) + '</td><td class="n">' + qAvgHTML(qm.sum, qm.n) + '</td><td class="n cost">' + fmtUSD(m.costUsd) + "</td></tr>";
         }).join("") + "</tbody></table>"
       : '<div class="op-empty">No usage yet</div>';
     $("insRuns").innerHTML = runs.length

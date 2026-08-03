@@ -227,6 +227,7 @@ func handleState(ctx *gofr.Context) (any, error) {
 	now := time.Now()
 	sessions := ScanAllSessions(maxToolsPerSession)
 	annotateHealth(sessions, now.UnixMilli())
+	annotateQuality(sessions)
 	return rawJSON(State{
 		AppVersion:    appVersion,
 		TmuxAvailable: tmuxBin != "",
