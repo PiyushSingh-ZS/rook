@@ -167,7 +167,50 @@
     m = repoList.filter(function (r) { return (r.name || "").toLowerCase() === repo; })[0];
     return m ? m.path : "";
   }
-  function repoDatalist(id) { return '<datalist id="' + id + '">' + repoList.map(function (r) { return '<option value="' + esc(r.path) + '">' + esc(r.name) + (r.remote ? " · " + esc(r.remote) : "") + "</option>"; }).join("") + "</datalist>"; }
+  // repoField renders a searchable repo picker (a text input + a styled dropdown)
+  // in place of the clunky native <datalist>. Pair with wireRepoPicker(id).
+  function repoField(id, placeholder, value) {
+    return '<div class="repo-pick">' +
+      '<input class="set-in repo-input" id="' + id + '" autocomplete="off" spellcheck="false" placeholder="' + esc(placeholder || "search your repos by name…") + '" value="' + esc(value || "") + '" />' +
+      '<div class="repo-menu" id="' + id + '_menu" hidden></div></div>';
+  }
+  // wireRepoPicker upgrades the input into a keyboard-driven combobox over the
+  // discovered repos (match by name / remote / path). onPick runs after a choice.
+  function wireRepoPicker(id, onPick) {
+    var input = $(id), menu = $(id + "_menu"); if (!input || !menu) return;
+    var active = -1, rows = [];
+    function filtered() {
+      var q = (input.value || "").toLowerCase().trim();
+      return repoList.filter(function (r) {
+        if (!q) return true;
+        return ((r.name || "") + " " + (r.remote || "") + " " + (r.path || "")).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 60);
+    }
+    function render() {
+      rows = filtered();
+      if (!rows.length) { menu.innerHTML = '<div class="repo-menu-empty">No matching repo — type or paste a full path</div>'; }
+      else menu.innerHTML = rows.map(function (r, i) {
+        return '<div class="repo-row' + (i === active ? " act" : "") + '" data-i="' + i + '">' +
+          '<div class="repo-row-main"><span class="repo-name">' + esc(r.name || "") + "</span>" + (r.remote ? '<span class="repo-remote">' + esc(r.remote) + "</span>" : "") + "</div>" +
+          '<div class="repo-path">' + esc(r.path || "") + "</div></div>";
+      }).join("");
+      menu.querySelectorAll(".repo-row").forEach(function (el) {
+        el.addEventListener("mousedown", function (e) { e.preventDefault(); pick(parseInt(el.dataset.i, 10)); });
+      });
+    }
+    function pick(i) { var r = rows[i]; if (!r) return; input.value = r.path; menu.hidden = true; active = -1; if (onPick) onPick(); }
+    function scrollActive() { var el = menu.querySelector(".repo-row.act"); if (el) el.scrollIntoView({ block: "nearest" }); }
+    input.addEventListener("focus", function () { active = -1; render(); menu.hidden = false; });
+    input.addEventListener("input", function () { active = -1; menu.hidden = false; render(); });
+    input.addEventListener("keydown", function (e) {
+      if (menu.hidden || !rows.length) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(rows.length - 1, active + 1); render(); scrollActive(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); render(); scrollActive(); }
+      else if (e.key === "Enter" && active >= 0) { e.preventDefault(); pick(active); }
+      else if (e.key === "Escape") { menu.hidden = true; active = -1; }
+    });
+    input.addEventListener("blur", function () { setTimeout(function () { menu.hidden = true; active = -1; }, 120); });
+  }
 
   // ---- data ----------------------------------------------------------------
   function sessions() { return (state && state.sessions) || []; }
@@ -1058,7 +1101,7 @@
     prefill = prefill || {};
     modal(prefill.title || "Launch agent",
       '<label class="set-field"><span class="set-k">Task name</span><input class="set-in" id="sp_name" placeholder="fix-auth-bug" value="' + esc(prefill.name || "") + '" /></label>' +
-      '<label class="set-field"><span class="set-k">Working directory' + (prefill.cwd ? ' <span class="set-hint" style="color:var(--ok)">auto-detected</span>' : "") + '</span><input class="set-in" id="sp_cwd" list="spRepoDL" placeholder="start typing a repo name…" value="' + esc(prefill.cwd || "") + '" />' + repoDatalist("spRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Working directory' + (prefill.cwd ? ' <span class="set-hint" style="color:var(--ok)">auto-detected</span>' : "") + '</span>' + repoField("sp_cwd", "search your repos by name…", prefill.cwd || "") + "</label>" +
       '<label class="set-field"><span class="set-k">Agent</span><select class="set-in" id="sp_agent"><option value="claude">claude</option><option value="codex">codex (beta)</option><option value="aider">aider (beta)</option><option value="gemini">gemini (beta)</option></select></label>' +
       '<label class="set-field"><span class="set-k">Model</span><select class="set-in" id="sp_model"><option value="default">Default (account)</option><option value="haiku">Haiku — cheapest</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label>' +
       '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
@@ -1086,6 +1129,7 @@
         }
         $("sp_cwd").addEventListener("input", loadDocs);
         $("sp_cwd").addEventListener("change", loadDocs);
+        wireRepoPicker("sp_cwd", loadDocs);
         if (prefill.cwd) loadDocs();
         $("sp_go").addEventListener("click", async function () {
           var cwd = $("sp_cwd").value;
@@ -1118,11 +1162,12 @@
   function createChain() {
     modal("New task chain",
       '<label class="set-field"><span class="set-k">Chain title</span><input class="set-in" id="ch_title" placeholder="ship feature X" /></label>' +
-      '<label class="set-field"><span class="set-k">Working directory</span><input class="set-in" id="ch_cwd" list="chRepoDL" placeholder="start typing a repo name…" />' + repoDatalist("chRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Working directory</span>' + repoField("ch_cwd", "search your repos by name…", "") + "</label>" +
       '<label class="set-field"><span class="set-k">Steps (one per line — each becomes a sequential agent)</span><textarea class="set-in" id="ch_steps" rows="5" placeholder="write failing tests\nimplement\nrun lint + fix"></textarea></label>' +
       '<label class="set-toggle"><input type="checkbox" id="ch_wt" checked /><span><b>Isolate in a git worktree</b></span></label>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="ch_go">' + I.plus + "Create chain</button></div>",
       function (ov, close) {
+        wireRepoPicker("ch_cwd");
         $("ch_go").addEventListener("click", async function () {
           var cwd = $("ch_cwd").value, steps = $("ch_steps").value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean).map(function (l, i) { return { name: "step" + (i + 1), prompt: l }; });
           if (!cwd || !steps.length) { toast("cwd and at least one step required", "err"); return; }
@@ -1154,12 +1199,13 @@
   function newGraph() {
     modal("New task graph",
       '<label class="set-field"><span class="set-k">Graph title</span><input class="set-in" id="gr_title" placeholder="ship feature X safely" /></label>' +
-      '<label class="set-field"><span class="set-k">Working directory</span><input class="set-in" id="gr_cwd" list="grRepoDL" placeholder="start typing a repo name…" />' + repoDatalist("grRepoDL") + "</label>" +
+      '<label class="set-field"><span class="set-k">Working directory</span>' + repoField("gr_cwd", "search your repos by name…", "") + "</label>" +
       '<label class="set-field"><span class="set-k">Nodes — one per line: <code>name | type | dependsOn | prompt</code></span><textarea class="set-in" id="gr_nodes" rows="7" spellcheck="false" placeholder="plan | agent |  | draft a plan for X&#10;approve | approval | plan:pass |&#10;build | agent | approve:pass | implement the plan&#10;test | agent | build:pass | verify run tests and fix failures&#10;rollback | agent | test:fail | revert the change and explain why"></textarea></label>' +
       '<div class="set-hint" style="margin:-6px 0 8px">type = <b>agent</b> or <b>approval</b>; dependsOn = <b>node:on</b> (on = pass·fail·done); prefix a prompt with <b>verify</b> to gate on the build/test result.</div>' +
       '<label class="set-toggle"><input type="checkbox" id="gr_wt" checked /><span><b>Isolate in a git worktree</b></span></label>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="gr_go">' + I.plus + "Create graph</button></div>",
       function (ov, close) {
+        wireRepoPicker("gr_cwd");
         setTimeout(function () { $("gr_cwd").focus(); }, 30);
         $("gr_go").addEventListener("click", async function () {
           var cwd = $("gr_cwd").value.trim(), nodes = parseGraphNodes($("gr_nodes").value);

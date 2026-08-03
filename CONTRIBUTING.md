@@ -17,10 +17,10 @@ the full setup.
 
 ## Working on the code
 
-- **Backend** is one Go package (`package main`). Build with `go build ./...`.
+- **Backend** is one Go package (`package main`) in `cmd/rook/`. Build with `go build ./cmd/rook` (or `go build ./...`).
 - **Frontend** (`web/`) has **no build step** — files are embedded and served as-is.
   After editing them, rebuild/restart the binary. Syntax-check JS with
-  `node --check web/<file>.js`.
+  `node --check cmd/rook/web/<file>.js`.
 - **Architecture, conventions, and how to add a UI view** are documented in
   [AGENTS.md](AGENTS.md) — please read it before a non-trivial change.
 
@@ -31,7 +31,7 @@ go build ./...        # compiles
 go test ./...         # unit tests pass
 make fmt              # gofmt
 make vet              # go vet
-node --check web/*.js # frontend syntax
+node --check cmd/rook/web/*.js # frontend syntax
 ```
 
 Then **open the affected screen in a browser at a real width in both light and dark
