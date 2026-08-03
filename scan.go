@@ -45,6 +45,7 @@ type Session struct {
 	UpdatedAt   int64      `json:"updatedAt"`   // ms epoch
 	TokensTotal int64      `json:"tokensTotal"` // total input+output for this session
 	ContextTokens int64    `json:"contextTokens"` // context-window fill at the latest turn (input+cache) — how "full" the agent is
+	ReflectionAttempts int `json:"reflectionAttempts"` // Reflexion retries recorded in this worktree's episodic buffer
 	Tokens5h    int64      `json:"tokens5h"`    // total tokens used in the last 5 hours
 	Tokens7d    int64      `json:"tokens7d"`    // total tokens used in the last 7 days
 	CostUSD     float64    `json:"costUsd"`     // estimated lifetime cost of this session
@@ -674,6 +675,7 @@ func ScanSessions(maxTools int) []Session {
 		}
 		s.Skills = projectSkills(sf.CWD)
 		s.Repo = repoForDir(sf.CWD)
+		s.ReflectionAttempts = reflectionAttemptsRO(sf.CWD)
 		if tp := findTranscript(sf.SessionID); tp != "" {
 			if p := parseTranscript(tp); p != nil {
 				s.Title = p.title

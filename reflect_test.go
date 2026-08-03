@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -52,4 +54,29 @@ func TestReflectionBuffer(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestReflectionAttemptsRO(t *testing.T) {
+	dir := t.TempDir()
+	// RO on a fresh worktree returns 0 and must NOT create the buffer dir
+	if got := reflectionAttemptsRO(dir); got != 0 {
+		t.Fatalf("RO fresh = %d, want 0", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, reflectDirName)); !os.IsNotExist(err) {
+		t.Fatalf("reflectionAttemptsRO created %s — it must be read-only", reflectDirName)
+	}
+	// after two reflections, RO counts them (without ever creating the dir itself)
+	if err := writeReflection(dir, "1", "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReflection(dir, "2", "boom again"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reflectionAttemptsRO(dir); got != 2 {
+		t.Fatalf("RO after 2 writes = %d, want 2", got)
+	}
+	// empty worktree path is safe
+	if got := reflectionAttemptsRO(""); got != 0 {
+		t.Fatalf("RO empty = %d, want 0", got)
+	}
 }

@@ -505,6 +505,7 @@
       stat("Running for", s.startedAt ? ago(s.startedAt, now()) : "—") +
       stat("Updated", ago(s.updatedAt, now()) + " ago") +
       stat("Health", esc(health)) +
+      (s.reflectionAttempts ? stat("Reflexion retries", s.reflectionAttempts + " to green") : "") +
       stat("Changed files", changed ? String(changed) : "0") +
       stat("PID", (s.pid || "—") + (s.alive ? "" : " (exited)")) +
       '<div class="ov-stat full"><div class="k">cwd</div><div class="v wrap">' + esc(s.cwd || "—") + "</div></div>" +

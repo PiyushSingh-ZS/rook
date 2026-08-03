@@ -100,6 +100,20 @@ func reflectionAttempts(worktree string) int {
 	return strings.Count(string(b), reflectEntryMarker)
 }
 
+// reflectionAttemptsRO counts reflections WITHOUT creating the buffer directory,
+// so it's safe to call for every session on each scan (reflectionFile would
+// MkdirAll and litter `.rook-reflect` into repos that never reflected).
+func reflectionAttemptsRO(worktree string) int {
+	if strings.TrimSpace(worktree) == "" {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(worktree, reflectDirName, reflectFileName))
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), reflectEntryMarker)
+}
+
 type reflectReq struct {
 	Path   string `json:"path"`
 	Output string `json:"output"`
