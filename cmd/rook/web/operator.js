@@ -924,6 +924,13 @@
         "</div>";
       }).join("") + "</div>" +
       '<div style="height:16px"></div>' +
+      '<div class="ins-sec-title">Quality &amp; cost per session</div>' +
+      '<div class="ins-qtiles" id="insQTiles"></div>' +
+      '<div class="ins-grid">' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Quality by session</div><div class="ins-card-meta">0–100 · higher is better</div></div><div id="insQualBar"></div></div>' +
+        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by session</div></div><div id="insCostBar"></div></div>' +
+      "</div>" +
+      '<div style="height:22px"></div>' +
       '<div class="ins-grid">' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by model</div><div class="ins-card-meta">' + fmtUSD(d.costUsd) + " · " + fmtTokens(d.tokensTotal) + '</div></div><div id="insModels"></div></div>' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Share</div></div><div id="insDonut"></div></div>' +
@@ -932,12 +939,6 @@
         '</div><div id="insTrend"></div></div>' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by project</div></div><div id="insProjects"></div></div>' +
         '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Top runs by cost</div><div class="ins-card-meta">' + runs.length + ' runs</div></div><div id="insRuns"></div></div>' +
-      "</div>" +
-      '<div class="ins-sec-title">Quality &amp; cost per session</div>' +
-      '<div class="ins-qtiles" id="insQTiles"></div>' +
-      '<div class="ins-grid">' +
-        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Quality by session</div><div class="ins-card-meta">0–100 · higher is better</div></div><div id="insQualBar"></div></div>' +
-        '<div class="ins-card"><div class="ins-card-head"><div class="ins-card-title">Cost by session</div></div><div id="insCostBar"></div></div>' +
       "</div>";
     // per-project cost, aggregated from the live session list (complete, not just top runs)
     var worked = function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); };
