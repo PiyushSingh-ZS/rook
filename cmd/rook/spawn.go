@@ -191,6 +191,12 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 // the long Claude Code v2 splash + MCP-auth banner can eat keystrokes typed too
 // early, leaving the agent idle at an empty prompt. So we wait until the REPL is
 // actually interactive, then type, VERIFY the text landed, and retry if it didn't.
+//
+// waitForPromptReady also clears the first-run "Do you trust the files in this
+// folder?" dialog Claude Code shows the first time it opens a directory. Every
+// worktree is a fresh directory, so without this the very first spawn per repo
+// would have its prompt eaten by the trust menu (and the trailing Enter would
+// just select "Yes, I trust") — which is why it silently worked from the 2nd try.
 func sendInitialPrompt(target, prompt string) {
 	waitForPromptReady(target, 45*time.Second)
 	time.Sleep(500 * time.Millisecond)
@@ -219,8 +225,24 @@ func sendInitialPrompt(target, prompt string) {
 }
 
 // promptReadyMarkers are strings that appear once the agent REPL is interactive
-// (its input line / status bar is drawn), so keystrokes will register.
-var promptReadyMarkers = []string{"for shortcuts", "❯", "esc to interrupt", "manual mode", "accept edits"}
+// (its input line / status bar is drawn), so keystrokes will register. "❯" is
+// deliberately NOT here: it is also the selection cursor of the first-run trust
+// dialog ("❯ 1. Yes, I trust this folder"), so treating it as "ready" made us
+// type the prompt into the trust menu, where it was discarded.
+var promptReadyMarkers = []string{"for shortcuts", "esc to interrupt", "manual mode", "accept edits"}
+
+// trustDialogMarkers identify Claude Code's first-run directory-trust prompt.
+var trustDialogMarkers = []string{"trust this folder", "trust the files", "Yes, I trust"}
+
+// paneHasTrustDialog reports whether the captured pane is showing the trust prompt.
+func paneHasTrustDialog(capture string) bool {
+	for _, m := range trustDialogMarkers {
+		if strings.Contains(capture, m) {
+			return true
+		}
+	}
+	return false
+}
 
 // paneReady reports whether a captured pane looks like an interactive REPL.
 func paneReady(capture string) bool {
@@ -243,11 +265,27 @@ func paneHasPrompt(capture, prompt string) bool {
 }
 
 // waitForPromptReady polls the pane until the REPL looks interactive (or timeout).
+// Along the way it dismisses the first-run trust dialog by confirming "Yes, I
+// trust this folder" (its default selection), so the real prompt can land after.
 func waitForPromptReady(target string, max time.Duration) {
 	deadline := time.Now().Add(max)
+	trustCleared := false
 	for time.Now().Before(deadline) {
 		time.Sleep(600 * time.Millisecond)
-		if out, err := runTmux("capture-pane", "-p", "-t", target); err == nil && paneReady(string(out)) {
+		out, err := runTmux("capture-pane", "-p", "-t", target)
+		if err != nil {
+			continue
+		}
+		capture := string(out)
+		if !trustCleared && paneHasTrustDialog(capture) {
+			// "Yes, I trust this folder" is the default highlighted option;
+			// Enter confirms it. Then keep polling for the actual REPL.
+			_ = tmuxSendKeys(target, false, "Enter")
+			trustCleared = true
+			time.Sleep(800 * time.Millisecond)
+			continue
+		}
+		if paneReady(capture) {
 			return
 		}
 	}
