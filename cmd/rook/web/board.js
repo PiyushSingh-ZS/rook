@@ -1,15 +1,17 @@
-// board.js — best-in-class draggable kanban board for rook.
+// board.js — live status board for rook. Cards reflect each agent's derived
+// state; you act from a card, you don't drag to force a state.
 // Self-contained: exposes window.renderBoardV2(mountEl, {sessions, chains}, cb).
 // No dependency on app.js internals; the caller wires cb.* to its own handlers.
 (function () {
   "use strict";
 
-  // Fixed columns, Vibe-Kanban / Linear model.
+  // Fixed columns. "Worktrees" is honest — the column holds agents running in an
+  // isolated worktree, which isn't the same as "in review".
   var COLS = [
     { key: "queued", label: "Queued" },
     { key: "working", label: "Working" },
     { key: "needs", label: "Needs you" },
-    { key: "review", label: "Review" },
+    { key: "review", label: "Worktrees" },
     { key: "done", label: "Idle / Done" },
   ];
   // Which columns get a "+ New task" affordance at the top.
@@ -42,37 +44,11 @@
     return "done";
   }
 
-  // ---- drag state (module scope so handlers share it) ----
-  var dragEl = null;
-  var indicator = null;
-
-  function makeIndicator() {
-    var el = document.createElement("div");
-    el.className = "bv-drop-ind";
-    return el;
-  }
-
-  // afterElement finds the card the pointer sits above, for drop-position preview.
-  function afterElement(body, y) {
-    var cards = Array.prototype.slice.call(
-      body.querySelectorAll(".bv-card:not(.dragging)")
-    );
-    var closest = { offset: -Infinity, el: null };
-    for (var i = 0; i < cards.length; i++) {
-      var box = cards[i].getBoundingClientRect();
-      var offset = y - box.top - box.height / 2;
-      if (offset < 0 && offset > closest.offset) {
-        closest = { offset: offset, el: cards[i] };
-      }
-    }
-    return closest.el;
-  }
-
   function iconBtn(label, cls) {
     return '<button type="button" class="bv-btn ' + cls + '">' + esc(label) + "</button>";
   }
 
-  // buildSessionCard returns a draggable card element for one session.
+  // buildSessionCard returns a card element for one session.
   function buildSessionCard(s, colKey, cb) {
     var st = statusOf(s);
     var waiting = st === "waiting";
@@ -222,6 +198,14 @@
     sessions.forEach(function (s) {
       buckets[columnFor(s)].push(s);
     });
+    // Rank "Needs you" by urgency: watchdog alerts first, then longest-waiting
+    // (oldest update) — so the agent most in need of you is at the top.
+    buckets.needs.sort(function (a, b) {
+      var aa = a.health && a.health.level === "alert" ? 1 : 0;
+      var ba = b.health && b.health.level === "alert" ? 1 : 0;
+      if (aa !== ba) return ba - aa;
+      return (a.updatedAt || 0) - (b.updatedAt || 0);
+    });
     var queued = [];
     chains.forEach(function (c) {
       (c.steps || []).forEach(function (step) {
@@ -235,7 +219,6 @@
     mount.classList.remove("board");
     mount.classList.add("board-v2");
     mount.innerHTML = "";
-    indicator = makeIndicator();
 
     COLS.forEach(function (col) {
       var built = buildColumn(col, cb);
