@@ -1,35 +1,55 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 )
 
-// pushNtfy sends a phone push via ntfy if FOREMAN_NTFY is set to a topic URL
-// (e.g. https://ntfy.sh/my-foreman-topic). Opt-in — off unless configured.
-func pushNtfy(title, body string) {
+// pushNtfy sends a phone push via ntfy to the configured topic URL
+// (e.g. https://ntfy.sh/my-rook-topic). Opt-in — off unless configured.
+// priority is an ntfy priority ("urgent"|"high"|""), "" leaving the default.
+func pushNtfy(title, body, priority string) {
 	url := loadConfig().Ntfy
-	if url == "" {
-		url = os.Getenv("FOREMAN_NTFY")
-	}
 	if url == "" {
 		return
 	}
+	postNtfy(url, title, body, priority)
+}
+
+// postNtfy performs the actual push and reports transport / non-2xx failures
+// instead of swallowing them — a revoked topic used to fail silently forever.
+func postNtfy(url, title, body, priority string) {
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
+		log.Printf("ntfy push: bad request: %v", err)
 		return
 	}
 	req.Header.Set("Title", title)
-	req.Header.Set("Tags", "construction_worker")
-	client := &http.Client{Timeout: 8 * time.Second}
-	if resp, err := client.Do(req); err == nil {
-		_ = resp.Body.Close()
+	if priority != "" {
+		req.Header.Set("Priority", priority)
 	}
+	req.Header.Set("Click", localUIURL()) // tapping the push opens the rook console
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("ntfy push failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		log.Printf("ntfy push: %s returned %s", url, resp.Status)
+	}
+}
+
+// localUIURL is the address the rook console is served on, for notification
+// click-throughs.
+func localUIURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d/", portFromListenFlag())
 }
 
 // startNotifier watches sessions and fires a quiet native banner notification
@@ -42,7 +62,7 @@ func startNotifier(interval time.Duration) {
 	notifiedWait := map[string]bool{}   // waiting sessions already alerted
 	lastStatus := map[string]string{}   // previous status per session
 	waitingSince := map[string]int64{}  // ms when a session entered waiting
-	escalated := map[string]bool{}      // stuck-escalation already fired
+	lastEscalate := map[string]int64{}  // ms of the last stuck re-alert
 	first := true
 	go func() {
 		for {
@@ -56,7 +76,7 @@ func startNotifier(interval time.Duration) {
 				prev := lastStatus[s.SessionID]
 				lastStatus[s.SessionID] = s.Status
 
-				// waiting: alert once per episode, and escalate if stuck
+				// waiting: alert once per episode, and keep escalating while stuck
 				if s.Status == "waiting" {
 					current[s.SessionID] = true
 					if _, ok := waitingSince[s.SessionID]; !ok {
@@ -68,16 +88,20 @@ func startNotifier(interval time.Duration) {
 							notifyWaiting(s)
 						}
 					}
-					if !first && !escalated[s.SessionID] &&
-						nowMs-waitingSince[s.SessionID] >= stuckAfter.Milliseconds() {
-						escalated[s.SessionID] = true
+					// Re-alert (urgent) every stuckAfter while it stays stuck, not
+					// once — a single escalation is easy to miss.
+					if !first && nowMs-waitingSince[s.SessionID] >= stuckAfter.Milliseconds() &&
+						nowMs-lastEscalate[s.SessionID] >= stuckAfter.Milliseconds() {
+						lastEscalate[s.SessionID] = nowMs
 						notifyStuck(s, nowMs-waitingSince[s.SessionID])
 					}
 					continue
 				}
 
-				// finished: a session that was working is now idle
-				if !first && prev == "busy" && s.Status == "idle" {
+				// finished: a session that was working OR waiting on you is now
+				// idle. Waiting->idle is a real completion (you answered, it wrapped
+				// up) and was previously missed.
+				if !first && (prev == "busy" || prev == "waiting") && s.Status == "idle" {
 					notifyFinished(s)
 				}
 			}
@@ -85,7 +109,7 @@ func startNotifier(interval time.Duration) {
 				if !current[id] {
 					delete(notifiedWait, id)
 					delete(waitingSince, id)
-					delete(escalated, id)
+					delete(lastEscalate, id)
 				}
 			}
 			first = false
@@ -100,7 +124,7 @@ func notifyStuck(s Session, waitedMs int64) {
 	subtitle := firstNonEmpty(s.Title, s.Project)
 	body := clip(firstNonEmpty(s.Asking, s.LastPrompt, "still waiting for your input"), 240)
 	banner(title, subtitle, body, "Sosumi")
-	pushNtfy(firstNonEmpty(s.Project, "agent")+" waiting "+itoa(int(mins))+"m", body)
+	pushNtfy(firstNonEmpty(s.Project, "agent")+" waiting "+itoa(int(mins))+"m", body, "urgent")
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -126,7 +150,7 @@ func notifyWaiting(s Session) {
 	subtitle := firstNonEmpty(s.Title, s.Project)
 	body := clip(firstNonEmpty(s.Asking, s.LastPrompt, "waiting for your input"), 240)
 	banner(title, subtitle, body, "Glass")
-	pushNtfy(firstNonEmpty(s.Project, "agent")+" needs you", body) // phone push (opt-in)
+	pushNtfy(firstNonEmpty(s.Project, "agent")+" needs you", body, "") // phone push (opt-in)
 }
 
 // notifyFinished fires a gentle banner when a working session goes idle.

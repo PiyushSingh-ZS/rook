@@ -88,7 +88,7 @@ func handleHook(ctx *gofr.Context) (any, error) {
 		rec.Detail = msg
 		banner("Claude Code", projectName(cwd), msg, "")
 		if c := loadConfig(); c.Ntfy != "" {
-			pushNtfy("Claude Code · "+projectName(cwd), msg)
+			pushNtfy("Claude Code · "+projectName(cwd), msg, "")
 		}
 		pushChat("Claude Code · "+projectName(cwd), msg) // Slack/Discord if configured
 	case "Stop", "SubagentStop":

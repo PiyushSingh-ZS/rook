@@ -244,9 +244,11 @@ func onSessionFinished(cwd string) {
 				title = "Tests FAILED · " + projectName(cwd)
 			}
 			banner("rook verify", title, firstLine(res.Output), "")
-			if loadConfig().Ntfy != "" {
-				pushNtfy(title, firstLine(res.Output))
+			verifyPrio := ""
+			if !res.OK {
+				verifyPrio = "high" // a failing build/test is worth surfacing
 			}
+			pushNtfy(title, firstLine(res.Output), verifyPrio)
 			pushChat("rook verify · "+title, firstLine(res.Output))
 			recordHook(hookRecord{Time: time.Now().UnixMilli(), Event: "Verify", Project: projectName(cwd),
 				Detail: title, Gated: gateFlag(res.OK)})

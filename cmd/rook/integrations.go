@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -121,8 +122,16 @@ func postJSON(url string, payload any) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if resp, err := client.Do(req); err == nil {
-		_ = resp.Body.Close()
+	// Report failures instead of swallowing them — a revoked webhook otherwise
+	// means zero alerts and zero feedback about why.
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("chat webhook failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		log.Printf("chat webhook returned %s", resp.Status)
 	}
 }
 
