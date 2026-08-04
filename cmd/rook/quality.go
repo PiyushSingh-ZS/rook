@@ -1,8 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
 
 // The quality signal is rook's read on how a task went, built from signals it
@@ -13,34 +19,80 @@ import (
 // It is NOT a correctness judgment (that needs an LLM judge) — a high score with
 // "no build/test gate run" means "nothing went visibly wrong," not "verified".
 
-// verifyStore remembers the last verify (build/test) outcome per worktree dir,
-// recorded by runVerify. Absent = never run for that dir.
+// verifyRec is the last build/test outcome for a worktree, tagged with the code
+// hash it was run against so a stale green pass is invalidated once the code
+// changes. Persisted to ~/.rook/verify.json so it survives a restart.
+type verifyRec struct {
+	Hash string `json:"hash"`
+	OK   bool   `json:"ok"`
+}
+
 var (
 	verifyMu    sync.Mutex
-	verifyStore = map[string]bool{}
+	verifyStore map[string]verifyRec
 )
+
+func verifyStorePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".rook", "verify.json")
+}
+
+func loadVerifyStore() map[string]verifyRec {
+	if verifyStore != nil {
+		return verifyStore
+	}
+	verifyStore = map[string]verifyRec{}
+	if b, err := os.ReadFile(verifyStorePath()); err == nil {
+		_ = json.Unmarshal(b, &verifyStore)
+	}
+	return verifyStore
+}
+
+// worktreeCodeHash fingerprints a worktree's code (HEAD + uncommitted diff) so a
+// verify outcome can be invalidated the moment the code moves. "" if not a repo.
+func worktreeCodeHash(dir string) string {
+	head, err := execWithTimeout("git", 5*time.Second, "-C", dir, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	diff, _ := execWithTimeout("git", 8*time.Second, "-C", dir, "diff", "HEAD")
+	sum := sha256.Sum256(append(append([]byte{}, head...), diff...))
+	return hex.EncodeToString(sum[:8])
+}
 
 func recordVerify(dir string, res verifyResult) {
 	if dir == "" || !res.Ran {
 		return
 	}
 	verifyMu.Lock()
-	verifyStore[dir] = res.OK
-	verifyMu.Unlock()
+	defer verifyMu.Unlock()
+	m := loadVerifyStore()
+	m[dir] = verifyRec{Hash: worktreeCodeHash(dir), OK: res.OK}
+	if b, err := json.MarshalIndent(m, "", "  "); err == nil {
+		_ = os.MkdirAll(filepath.Dir(verifyStorePath()), 0o755)
+		_ = os.WriteFile(verifyStorePath(), b, 0o644)
+	}
 }
 
-// verifyOutcomeFor returns "pass" | "fail" | "" (not run) for a worktree dir.
+// verifyOutcomeFor returns "pass" | "fail" | "" (not run / stale) for a worktree.
+// A recorded outcome whose code hash no longer matches is treated as not-run, so
+// the quality score never rides a green pass from before the latest edits.
 func verifyOutcomeFor(dir string) string {
 	if dir == "" {
 		return ""
 	}
 	verifyMu.Lock()
-	defer verifyMu.Unlock()
-	v, ok := verifyStore[dir]
+	rec, ok := loadVerifyStore()[dir]
+	verifyMu.Unlock()
 	if !ok {
 		return ""
 	}
-	if v {
+	if rec.Hash != "" {
+		if cur := worktreeCodeHash(dir); cur != "" && cur != rec.Hash {
+			return "" // code changed since the verify — stale, don't trust it
+		}
+	}
+	if rec.OK {
 		return "pass"
 	}
 	return "fail"
@@ -102,16 +154,7 @@ func computeQuality(s Session, verify string) (int, string, []qualityFactor) {
 		factors = append(factors, qualityFactor{Name: "Tool reliability", OK: true, Detail: "no tool errors"})
 	}
 
-	// 3) No looping / thrash (minor efficiency).
-	loopPen, loopDetail := 0, "no repeated tool calls"
-	if n, tc := leadingRepeat(s.ToolCalls); n >= loopRunLen {
-		loopPen = capPenalty((n-loopRunLen+1)*6, 15)
-		loopDetail = fmt.Sprintf("looping on %s ×%d", toolLabel(tc), n)
-	}
-	score -= loopPen
-	factors = append(factors, qualityFactor{Name: "No looping", OK: loopPen == 0, Penalty: loopPen, Detail: loopDetail})
-
-	// 4) Recovered without retries (minor) — reflexion retries to pass the gate.
+	// 3) Recovered without retries (minor) — reflexion retries to pass the gate.
 	refPen, refDetail := 0, "passed checks without retries"
 	if s.ReflectionAttempts > 0 {
 		refPen = capPenalty(s.ReflectionAttempts*6, 15)
@@ -120,14 +163,21 @@ func computeQuality(s Session, verify string) (int, string, []qualityFactor) {
 	score -= refPen
 	factors = append(factors, qualityFactor{Name: "Recovered cleanly", OK: refPen == 0, Penalty: refPen, Detail: refDetail})
 
-	// 5) No stalls (minor) — watchdog "busy but no output". Waiting-on-human isn't counted.
-	stallPen, stallDetail := 0, "kept making progress"
-	if s.Health != nil && s.Health.Level == "warn" {
-		stallPen = 8
-		stallDetail = s.Health.Reason
+	// 4) Stability — the watchdog's read (looping / stalled). SINGLE source: the
+	//    old build had a separate leadingRepeat recompute here that double-counted
+	//    the same loop the watchdog already flags. Waiting-on-human (Action
+	//    "answer") isn't a quality problem, so it's excluded.
+	stabPen, stabDetail, stabOK := 0, "steady progress", true
+	if s.Health != nil && s.Health.Action != "answer" {
+		switch s.Health.Level {
+		case "alert":
+			stabPen, stabDetail, stabOK = 15, s.Health.Reason, false
+		case "warn":
+			stabPen, stabDetail, stabOK = 8, s.Health.Reason, false
+		}
 	}
-	score -= stallPen
-	factors = append(factors, qualityFactor{Name: "No stalls", OK: stallPen == 0, Penalty: stallPen, Detail: stallDetail})
+	score -= stabPen
+	factors = append(factors, qualityFactor{Name: "Stability", OK: stabOK, Penalty: stabPen, Detail: stabDetail})
 
 	if score < 0 {
 		score = 0

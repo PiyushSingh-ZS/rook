@@ -51,16 +51,23 @@ func TestComputeQuality(t *testing.T) {
 		t.Fatalf("no-gate build factor should be neutral+flagged, got %+v", f)
 	}
 
-	// process issues are now MINOR relative to outcome (looping capped at 15)
-	loop := []ToolCall{qtc("Bash"), qtc("Bash"), qtc("Bash"), qtc("Bash"), qtc("Bash")}
-	_, _, factors = computeQuality(Session{ToolResults: 10, ToolCalls: loop}, "pass")
-	lf := factorByName(factors, "No looping")
+	// stability comes from the watchdog Health (single source), not a separate
+	// leadingRepeat recompute — an alert is a minor (<=15) hit.
+	looping := Session{ToolResults: 10, Health: &Health{Level: "alert", Reason: "looping — repeated Bash ×5"}}
+	_, _, factors = computeQuality(looping, "pass")
+	lf := factorByName(factors, "Stability")
 	if lf == nil || lf.OK || lf.Penalty > 15 {
-		t.Fatalf("looping should be a minor (<=15) penalty, got %+v", lf)
+		t.Fatalf("looping should be a minor (<=15) stability penalty, got %+v", lf)
+	}
+	// waiting-on-human is NOT a quality problem, so it doesn't dock stability
+	waiting := Session{ToolResults: 10, Health: &Health{Level: "alert", Reason: "waiting", Action: "answer"}}
+	_, _, factors = computeQuality(waiting, "pass")
+	if wf := factorByName(factors, "Stability"); wf == nil || !wf.OK {
+		t.Fatalf("waiting-on-human should not dock stability, got %+v", wf)
 	}
 
 	// failing build + high tool errors + looping → at risk
-	sc, label, _ = computeQuality(Session{ToolResults: 10, ToolErrors: 8, ToolCalls: loop}, "fail")
+	sc, label, _ = computeQuality(Session{ToolResults: 10, ToolErrors: 8, Health: &Health{Level: "alert", Reason: "looping"}}, "fail")
 	if sc >= 50 || label != "at risk" {
 		t.Fatalf("compounded bad run = %d/%s, want low/at risk", sc, label)
 	}
