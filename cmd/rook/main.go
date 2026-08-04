@@ -294,10 +294,22 @@ func handleRespond(ctx *gofr.Context) (any, error) {
 	if pane == "" {
 		return nil, errf(http.StatusConflict, "session is not in a tmux pane")
 	}
+	before, _ := runTmux("capture-pane", "-p", "-t", pane)
 	if code, err := applyKeyAction(pane, req.Action, req.Value); err != nil {
 		return nil, errf(code, "%v", err)
 	}
-	return rawJSON(map[string]any{"ok": true, "pane": pane, "action": req.Action})
+	// Confirm the keystroke actually took effect rather than reporting a blind
+	// success. A waiting agent sits at a static prompt, so an accepted
+	// allow/deny/menu-choice changes the pane; an ignored keystroke (the agent
+	// wasn't really at a prompt) leaves it byte-identical.
+	landed := true
+	switch req.Action {
+	case "allow", "deny", "key":
+		time.Sleep(350 * time.Millisecond)
+		after, _ := runTmux("capture-pane", "-p", "-t", pane)
+		landed = string(after) != string(before)
+	}
+	return rawJSON(map[string]any{"ok": true, "landed": landed, "pane": pane, "action": req.Action})
 }
 
 func isMenuKey(s string) bool {

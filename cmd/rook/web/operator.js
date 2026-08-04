@@ -548,10 +548,8 @@
     if (st === "waiting") {
       var gate = s.controllable
         ? '<div class="ov-gate">' +
-            '<button class="btn allow" id="ovAllow">' + I.check + "Allow <kbd>a</kbd></button>" +
-            '<button class="btn danger" id="ovDeny">' + I.x + "Deny <kbd>d</kbd></button>" +
-            '<button class="btn sm" data-key="2">opt 2</button>' +
-            '<button class="btn sm" data-key="3">opt 3</button>' +
+            '<button class="btn allow" id="ovAllow" title="Enter — accept the highlighted choice">' + I.check + "Allow</button>" +
+            '<button class="btn danger" id="ovDeny" title="Esc — cancel the request">' + I.x + "Deny</button>" +
             '<button class="btn sm" data-key="interrupt" title="send Ctrl-C">interrupt</button>' +
           "</div>" +
           '<div class="ov-reply"><textarea id="ovReply" placeholder="Reply to the agent…  (⌘↵ to send)"></textarea>' +
@@ -635,8 +633,16 @@
         .then(function (res) { toast(res.ok ? "Sent /compact to the agent" : (resumeErr(res.j) || "Couldn't compact"), res.ok ? "ok" : "err"); })
         .catch(function () { toast("Couldn't compact", "err"); });
     });
-    $("ovAllow") && $("ovAllow").addEventListener("click", function () { respond(s.sessionId, "allow", ""); toast("Allowed", "ok"); });
-    $("ovDeny") && $("ovDeny").addEventListener("click", function () { respond(s.sessionId, "deny", ""); toast("Denied", ""); });
+    $("ovAllow") && $("ovAllow").addEventListener("click", function () {
+      respond(s.sessionId, "allow", "").then(function (res) {
+        toast(!res.ok ? "Allow failed" : res.landed ? "Allowed" : "Sent Allow — but the agent's screen didn't change", res.ok && res.landed ? "ok" : "");
+      });
+    });
+    $("ovDeny") && $("ovDeny").addEventListener("click", function () {
+      respond(s.sessionId, "deny", "").then(function (res) {
+        toast(!res.ok ? "Deny failed" : res.landed ? "Denied" : "Sent Deny — but the agent's screen didn't change", res.ok ? "" : "err");
+      });
+    });
     p.querySelectorAll("[data-key]").forEach(function (b) {
       b.addEventListener("click", function () { var k = b.dataset.key; respond(s.sessionId, k === "interrupt" ? "interrupt" : "key", k === "interrupt" ? "" : k); });
     });
@@ -1144,8 +1150,11 @@
 
   // ---- actions -------------------------------------------------------------
   async function respond(id, action, value) {
-    try { await fetch("/api/respond", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id, action: action, value: value }) }); }
-    catch (e) { toast("Action failed", "err"); }
+    try {
+      var r = await fetch("/api/respond", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id, action: action, value: value }) });
+      var j = await r.json().catch(function () { return {}; }); if (j && j.data) j = j.data;
+      return { ok: r.ok, landed: !!(j && j.landed) };
+    } catch (e) { toast("Action failed", "err"); return { ok: false, landed: false }; }
   }
   async function killAgent(s) {
     try { await fetch("/api/kill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId, target: s.tmuxPane }) }); toast("Agent stopped", ""); }
