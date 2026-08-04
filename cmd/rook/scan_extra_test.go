@@ -28,16 +28,23 @@ func TestSummarizeSession_Empty(t *testing.T) {
 
 func TestDeriveActivity(t *testing.T) {
 	withBash := &parsedTranscript{tools: []ToolCall{{Name: "Bash", Summary: "go build"}}}
+	editRun := &parsedTranscript{tools: []ToolCall{
+		{Name: "Edit", Summary: "a.go", Timestamp: 1000},
+		{Name: "Edit", Summary: "b.go", Timestamp: 61000},
+		{Name: "Edit", Summary: "c.go", Timestamp: 121000},
+	}}
 	cases := []struct {
 		status string
 		p      *parsedTranscript
 		want   string
 	}{
-		{"busy", withBash, "Running Bash: go build"},
+		{"busy", withBash, "Running go build"},
 		{"busy", &parsedTranscript{}, "Thinking…"},
 		{"waiting", withBash, "Waiting for your input"},
-		{"shell", withBash, "Shell: go build"},
+		{"shell", withBash, "Running go build"},
 		{"idle", &parsedTranscript{lastText: "All done."}, "All done."},
+		// narrates the trailing run of same-family calls with a dwell time
+		{"busy", editRun, "Editing — 3 edits · 2m"},
 	}
 	for _, c := range cases {
 		if got := deriveActivity(c.status, c.p); got != c.want {

@@ -612,35 +612,92 @@ func itoa(n int) string {
 
 // deriveActivity produces a human one-liner for what a session is doing now.
 func deriveActivity(status string, p *parsedTranscript) string {
-	var lastTool *ToolCall
-	if n := len(p.tools); n > 0 {
-		lastTool = &p.tools[n-1]
-	}
 	switch status {
-	case "busy":
-		if lastTool != nil {
-			if lastTool.Summary != "" {
-				return "Running " + lastTool.Name + ": " + lastTool.Summary
-			}
-			return "Running " + lastTool.Name
-		}
-		return "Thinking…"
+	case "busy", "shell":
+		return narrateBusy(p)
 	case "waiting":
 		return "Waiting for your input"
-	case "shell":
-		if lastTool != nil && lastTool.Name == "Bash" {
-			return "Shell: " + lastTool.Summary
-		}
-		return "Running a shell command"
 	case "idle", "dead":
 		if p.lastText != "" {
 			return oneLine(p.lastText)
 		}
-		if lastTool != nil {
-			return "Last: " + lastTool.Name + " " + lastTool.Summary
+		if n := len(p.tools); n > 0 {
+			return "Last: " + p.tools[n-1].Name + " " + p.tools[n-1].Summary
 		}
 	}
 	return ""
+}
+
+// toolFamily groups tools so a run of them narrates as one activity.
+func toolFamily(name string) string {
+	switch name {
+	case "Edit", "Write", "MultiEdit", "NotebookEdit":
+		return "edit"
+	case "Read":
+		return "read"
+	case "Grep", "Glob", "LS":
+		return "search"
+	case "Bash":
+		return "shell"
+	case "WebFetch", "WebSearch":
+		return "web"
+	case "Task":
+		return "task"
+	}
+	return ""
+}
+
+// narrateBusy summarizes what an agent is doing from the trailing run of same-
+// family tool calls, with a dwell time — "Editing scan.go — 3 edits · 4m" reads
+// like a glance over the shoulder, not "Running Edit".
+func narrateBusy(p *parsedTranscript) string {
+	n := len(p.tools)
+	if n == 0 {
+		return "Thinking…"
+	}
+	last := p.tools[n-1]
+	fam := toolFamily(last.Name)
+	run, firstTs := 1, last.Timestamp
+	for i := n - 2; i >= 0; i-- {
+		if toolFamily(p.tools[i].Name) != fam || fam == "" {
+			break
+		}
+		run++
+		if p.tools[i].Timestamp > 0 {
+			firstTs = p.tools[i].Timestamp
+		}
+	}
+	dwell := ""
+	if run > 1 && firstTs > 0 && last.Timestamp > firstTs {
+		dwell = " · " + humanDur(last.Timestamp-firstTs)
+	}
+	switch fam {
+	case "edit":
+		if run > 1 {
+			return "Editing — " + itoa(run) + " edits" + dwell
+		}
+		return "Editing " + last.Summary
+	case "read":
+		if run > 1 {
+			return "Reading " + itoa(run) + " files" + dwell
+		}
+		return "Reading " + last.Summary
+	case "search":
+		return "Searching the codebase"
+	case "shell":
+		if last.Summary != "" {
+			return "Running " + last.Summary
+		}
+		return "Running a shell command"
+	case "web":
+		return "Researching on the web"
+	case "task":
+		return "Running a sub-agent"
+	}
+	if last.Summary != "" {
+		return "Running " + last.Name + ": " + last.Summary
+	}
+	return "Running " + last.Name
 }
 
 func oneLine(s string) string {

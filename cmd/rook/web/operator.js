@@ -591,6 +591,11 @@
     } else if (s.activity) {
       h += '<div class="ov-summary reveal"><div class="ov-summary-label">Now</div><div class="ov-summary-text">' + esc(s.activity) + "</div></div>";
     }
+    // watchdog Health, promoted to a lead block (was buried as 1 of 15 stats)
+    if (s.health && s.health.level && s.health.level !== "ok" && st !== "waiting") {
+      var hact = s.health.action === "terminal" ? '<button class="btn sm" id="ovHealthAct">' + I.terminal + "Open terminal</button>" : "";
+      h += '<div class="ov-health ' + esc(s.health.level) + '"><span class="ovh-ic">' + I.alert + "</span><span class=\"ovh-txt\">" + esc(s.health.reason || s.health.level) + "</span>" + hact + "</div>";
+    }
     if (s.summary) h += '<div class="ov-summary"><div class="ov-summary-label">Work done</div><div class="ov-summary-text">' + esc(s.summary) + "</div></div>";
     // context-window fill — how full the agent is (near-limit → likely compaction)
     if (s.contextTokens > 0) {
@@ -655,6 +660,7 @@
       ta.addEventListener("keydown", function (e) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doSend(); } });
     }
     $("ovQuality") && $("ovQuality").addEventListener("click", function () { showQuality(s); });
+    $("ovHealthAct") && $("ovHealthAct").addEventListener("click", function () { switchTab("terminal"); });
     $("ovCompact") && $("ovCompact").addEventListener("click", function () {
       fetch("/api/compact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId }) })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: (j && j.data) || j }; }); })

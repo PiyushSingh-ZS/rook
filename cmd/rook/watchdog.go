@@ -7,6 +7,7 @@ import "fmt"
 type Health struct {
 	Level  string `json:"level"`  // ok | warn | alert
 	Reason string `json:"reason"` // human one-liner
+	Action string `json:"action,omitempty"` // suggested remedy: "" | "terminal" | "answer"
 }
 
 // watchdog thresholds. Kept conservative to avoid false positives that would
@@ -46,17 +47,17 @@ func computeHealth(s *Session, now int64) *Health {
 	// 1) looping: the agent keeps issuing the same tool call — usually a stuck
 	// retry loop burning tokens. Highest-signal, so check it first.
 	if n, tc := leadingRepeat(s.ToolCalls); n >= loopRunLen {
-		return &Health{Level: "alert", Reason: fmt.Sprintf("looping — repeated %s ×%d", toolLabel(tc), n)}
+		return &Health{Level: "alert", Reason: fmt.Sprintf("looping — repeated %s ×%d", toolLabel(tc), n), Action: "terminal"}
 	}
 
 	// 2) waiting for input too long: the user is the blocker.
 	if s.Status == "waiting" && age >= waitingStuckMs {
-		return &Health{Level: "alert", Reason: "waiting " + humanDur(age) + " for your input"}
+		return &Health{Level: "alert", Reason: "waiting " + humanDur(age) + " for your input", Action: "answer"}
 	}
 
 	// 3) apparently working but frozen: "busy"/"shell" with no new output.
 	if (s.Status == "busy" || s.Status == "shell") && age >= idleBusyMs {
-		return &Health{Level: "warn", Reason: "no new output for " + humanDur(age)}
+		return &Health{Level: "warn", Reason: "no new output for " + humanDur(age), Action: "terminal"}
 	}
 	return nil
 }

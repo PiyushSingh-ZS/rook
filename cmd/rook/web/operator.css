@@ -582,6 +582,12 @@ select.set-in { cursor: pointer; }
 .q-badge.warn { color:var(--busy); }
 .q-badge.crit { color:var(--danger); }
 .q-badge.unrated { color:var(--ink-3); }
+.ov-health { display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:10px; margin-bottom:12px; font-size:13.5px; border:1px solid; }
+.ov-health.alert { background:color-mix(in srgb, var(--danger) 12%, transparent); border-color:color-mix(in srgb, var(--danger) 45%, transparent); color:var(--danger); }
+.ov-health.warn { background:color-mix(in srgb, var(--busy) 12%, transparent); border-color:color-mix(in srgb, var(--busy) 45%, transparent); color:var(--busy); }
+.ov-health .ovh-ic svg { width:16px; height:16px; }
+.ov-health .ovh-txt { flex:1; color:var(--ink); }
+.ov-health .btn { margin-left:auto; }
 
 /* quality badge click affordance + breakdown modal */
 .q-badge.q-click { cursor: pointer; }
