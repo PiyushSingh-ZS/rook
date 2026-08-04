@@ -47,7 +47,10 @@ func legacyConfigPath() string {
 }
 
 func loadConfig() Config {
-	var c Config
+	// Safe default: the destructive-command gate is ON unless explicitly
+	// disabled. A saved config that sets "hooksGate": false overrides this;
+	// a config without the key (or no config at all) keeps the gate on.
+	c := Config{HooksGate: true}
 	raw, err := os.ReadFile(configPath())
 	if err != nil {
 		raw, err = os.ReadFile(legacyConfigPath()) // migrate old settings

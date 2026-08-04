@@ -30,15 +30,20 @@ var rookHookEvents = []string{"Notification", "PreToolUse", "Stop", "SubagentSto
 // dangerRules are clearly-destructive command patterns the PreToolUse gate
 // blocks when gating is enabled. Conservative on purpose — false denies are
 // worse than a missed catch here, since the user can always run it themselves.
+// dangerRules are the authoritative BLOCK ruleset, deliberately conservative
+// (false denies are worse than a missed catch — the user can always run it
+// themselves). Case-insensitive so a lowercase `drop table` is caught, not just
+// the SQL-shouted form. The audit view keeps a broader *advisory* set; this one
+// is the subset rook will actually deny.
 var dangerRules = []struct {
 	re     *regexp.Regexp
 	reason string
 }{
-	{regexp.MustCompile(`\brm\s+-\S*r\S*\s+(/|~|\$HOME)(/|\s|$)`), "rm -rf on a root/home path"},
-	{regexp.MustCompile(`\bgit\s+push\b.*--force\b.*\b(main|master)\b`), "force-push to main/master"},
-	{regexp.MustCompile(`\bgit\s+reset\s+--hard\b.*\borigin/(main|master)\b`), "hard reset onto origin main/master"},
-	{regexp.MustCompile(`\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b`), "destructive SQL (DROP/TRUNCATE)"},
-	{regexp.MustCompile(`:\s*>\s*/dev/sd[a-z]`), "writing to a raw disk device"},
+	{regexp.MustCompile(`(?i)\brm\s+-\S*r\S*\s+(/|~|\$HOME)(/|\s|$)`), "rm -rf on a root/home path"},
+	{regexp.MustCompile(`(?i)\bgit\s+push\b.*--force\b.*\b(main|master)\b`), "force-push to main/master"},
+	{regexp.MustCompile(`(?i)\bgit\s+reset\s+--hard\b.*\borigin/(main|master)\b`), "hard reset onto origin main/master"},
+	{regexp.MustCompile(`(?i)\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b`), "destructive SQL (DROP/TRUNCATE)"},
+	{regexp.MustCompile(`(?i):\s*>\s*/dev/sd[a-z]`), "writing to a raw disk device"},
 }
 
 // hookRecord is one received event, kept in a ring buffer for the events feed.
@@ -104,6 +109,12 @@ func handleHook(ctx *gofr.Context) (any, error) {
 			if reason := dangerReason(tool, raw["tool_input"]); reason != "" {
 				rec.Gated = "deny"
 				recordHook(rec)
+				// Narrate the block — a silent deny leaves the user wondering why
+				// the agent stalled. Surface it on every configured channel.
+				proj := projectName(cwd)
+				banner("🛑 rook blocked a command", proj, reason+": "+clip(rec.Detail, 160), "Sosumi")
+				pushNtfy("rook blocked "+proj, reason+": "+clip(rec.Detail, 200), "high")
+				pushChat("rook blocked "+proj, reason+": "+clip(rec.Detail, 200))
 				return rawJSON(map[string]any{
 					"hookSpecificOutput": map[string]any{
 						"hookEventName":            "PreToolUse",
@@ -218,23 +229,56 @@ func handleHooksUninstall(ctx *gofr.Context) (any, error) {
 	return handleHooksStatus(ctx)
 }
 
+// backstopPattern is the fail-safe denylist the hook script greps LOCALLY when
+// rook is unreachable, so the gate is never silently off. Deliberately broader
+// than dangerRules (it runs blind, without rook) but fires only on clearly
+// catastrophic commands. POSIX ERE so it works with both BSD and GNU grep -E.
+const backstopPattern = `rm[[:space:]]+-[[:alnum:]]*[rf][[:alnum:]]*[[:space:]]+(/|~|\$HOME)|git[[:space:]]+push.*--force|mkfs|dd[[:space:]].*of=/dev/|>[[:space:]]*/dev/sd|(DROP|TRUNCATE)[[:space:]]+(TABLE|DATABASE)`
+
+// hookScriptTmpl is the wrapper installed into settings.json. __PORT__ and
+// __PATTERN__ are substituted at install time (string replace, so no fmt
+// %-escaping in the shell body can get it wrong).
+const hookScriptTmpl = `#!/bin/sh
+# rook hooks bridge — installed by rook. Pipes each Claude Code hook event to
+# rook and relays rook's JSON reply (used for PreToolUse gating). If rook is
+# unreachable, a local backstop still blocks catastrophic commands so the gate
+# is never silently OFF: the old script exited 0 with no output on failure,
+# which Claude Code reads as "allow" (fail-open).
+payload=$(cat)
+resp=$(printf '%s' "$payload" | curl -s -m 5 -X POST "http://127.0.0.1:__PORT__/api/hook" \
+  -H "Content-Type: application/json" --data-binary @- 2>/dev/null)
+if [ -n "$resp" ]; then
+  printf '%s' "$resp"
+  exit 0
+fi
+# rook unreachable: fail SAFE on PreToolUse — deny only clearly-catastrophic
+# commands, let everything else through so agents aren't frozen when rook is down.
+case "$payload" in
+  *'"hook_event_name":"PreToolUse"'*|*'"hook_event_name": "PreToolUse"'*)
+    if printf '%s' "$payload" | grep -Eiq '__PATTERN__'; then
+      printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"rook gate offline — blocked a destructive-looking command for safety. Start rook, or disable the gate in Settings."}}'
+    fi
+    ;;
+esac
+exit 0
+`
+
+// buildHookScript substitutes the port + backstop pattern into the wrapper.
+func buildHookScript(port int) string {
+	return strings.NewReplacer(
+		"__PORT__", fmt.Sprint(port),
+		"__PATTERN__", backstopPattern,
+	).Replace(hookScriptTmpl)
+}
+
 // writeHookScript writes the wrapper that pipes a hook event to rook and relays
-// rook's reply. The rook port is baked in at install time.
+// rook's reply, with a local fail-safe backstop for when rook is unreachable.
 func writeHookScript() error {
 	dir := filepath.Dir(hookScriptPath())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	port := portFromListenFlag()
-	script := fmt.Sprintf(`#!/bin/sh
-# rook hooks bridge — installed by rook. Pipes the Claude Code hook event to
-# rook and relays rook's JSON reply (used for PreToolUse gating).
-payload=$(cat)
-printf '%%s' "$payload" | curl -s -m 5 -X POST "http://127.0.0.1:%d/api/hook" \
-  -H "Content-Type: application/json" --data-binary @- 2>/dev/null
-exit 0
-`, port)
-	return os.WriteFile(hookScriptPath(), []byte(script), 0o755)
+	return os.WriteFile(hookScriptPath(), []byte(buildHookScript(portFromListenFlag())), 0o755)
 }
 
 // mergeHooksIntoSettings adds (add=true) or removes rook's hook entries in
