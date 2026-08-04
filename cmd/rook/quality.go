@@ -65,6 +65,17 @@ func capPenalty(p, max int) int {
 // computeQuality scores a session given its build/test outcome ("pass"|"fail"|"")
 // and returns the factor breakdown behind it.
 func computeQuality(s Session, verify string) (int, string, []qualityFactor) {
+	// Nothing to judge yet: no build/test gate ran AND no tool activity to
+	// score. Defaulting to a perfect 100 here is a lie ("did nothing" reads as
+	// "excellent"). Surface it as unrated (score -1) so the UI can gray it out.
+	if verify == "" && s.ToolResults == 0 {
+		return -1, "unrated", []qualityFactor{{
+			Name:   "Not yet rated",
+			OK:     true,
+			Detail: "no build/test gate run and no tool activity to score yet",
+		}}
+	}
+
 	score := 100
 	factors := make([]qualityFactor, 0, 5)
 
@@ -152,6 +163,10 @@ func annotateQuality(sessions []Session) {
 		sessions[i].QualityScore = sc
 		sessions[i].QualityLabel = label
 		sessions[i].QualityFactors = factors
+		if label == "unrated" {
+			sessions[i].QualityReasons = []string{"not yet rated — no build/test gate or tool activity yet"}
+			continue
+		}
 		reasons := []string{}
 		for _, f := range factors {
 			if !f.OK {

@@ -64,6 +64,20 @@ func TestComputeQuality(t *testing.T) {
 	if sc >= 50 || label != "at risk" {
 		t.Fatalf("compounded bad run = %d/%s, want low/at risk", sc, label)
 	}
+
+	// nothing to judge — no gate ran AND zero tool activity → unrated, not a
+	// flattering 100. This is the "did nothing = excellent" lie.
+	sc, label, factors = computeQuality(Session{}, "")
+	if sc != -1 || label != "unrated" {
+		t.Fatalf("zero-signal run = %d/%s, want -1/unrated", sc, label)
+	}
+	if len(factors) != 1 || factors[0].Name != "Not yet rated" {
+		t.Fatalf("unrated should carry a single explanatory factor, got %+v", factors)
+	}
+	// but an outcome signal alone (even with zero tool calls) IS rateable
+	if sc, label, _ = computeQuality(Session{}, "pass"); sc != 100 || label != "excellent" {
+		t.Fatalf("verified run with no tools = %d/%s, want 100/excellent", sc, label)
+	}
 }
 
 func TestCountToolResults(t *testing.T) {

@@ -574,6 +574,7 @@ select.set-in { cursor: pointer; }
 .q-badge.ok { color:var(--ok); }
 .q-badge.warn { color:var(--busy); }
 .q-badge.crit { color:var(--danger); }
+.q-badge.unrated { color:var(--ink-3); }
 
 /* quality badge click affordance + breakdown modal */
 .q-badge.q-click { cursor: pointer; }
@@ -582,7 +583,7 @@ select.set-in { cursor: pointer; }
 .q-detail { display:flex; flex-direction:column; gap:14px; }
 .q-hero { display:flex; align-items:center; gap:16px; }
 .q-score { font-family:var(--mono); font-size:34px; font-weight:700; line-height:1; width:74px; height:64px; display:flex; align-items:center; justify-content:center; border:2px solid currentColor; border-radius:12px; }
-.q-score.ok { color:var(--ok); } .q-score.warn { color:var(--busy); } .q-score.crit { color:var(--danger); }
+.q-score.ok { color:var(--ok); } .q-score.warn { color:var(--busy); } .q-score.crit { color:var(--danger); } .q-score.unrated { color:var(--ink-3); }
 .q-hero-lab { display:flex; flex-direction:column; }
 .q-hero-lab b { font-size:16px; color:var(--ink); text-transform:capitalize; }
 .q-hero-lab span { font-size:12px; color:var(--ink-4); }

@@ -586,7 +586,7 @@
       }).join("");
       h += '<div class="ov-sec-label">Quality &amp; cost</div>' +
         '<div class="q-detail ovq-card">' +
-          '<div class="q-hero"><div class="q-score ' + qualityCls(qv) + '">' + qv + "</div>" +
+          '<div class="q-hero"><div class="q-score ' + qualityCls(qv) + '">' + (qv < 0 ? "—" : qv) + "</div>" +
             '<div class="q-hero-lab"><b>' + esc(s.qualityLabel || "") + "</b><span>work-quality score</span></div>" +
             '<div class="q-cost"><div class="qc-v">' + fmtUSD(s.costUsd) + '</div><div class="qc-k">cost' + (perMtok ? " · " + esc(perMtok) : "") + "</div></div></div>" +
           '<div class="q-rows">' + qfac + "</div></div>";
@@ -644,10 +644,11 @@
   function stat(k, v, wrap) { return '<div class="ov-stat"><div class="k">' + k + '</div><div class="v' + (wrap ? " wrap" : "") + '">' + v + "</div></div>"; }
   // qualityHTML renders the per-task work-quality badge (score + label), colored,
   // with the contributing reasons as a tooltip. "—" until the agent has done work.
-  function qualityCls(q) { return q >= 85 ? "ok" : q >= 70 ? "warn" : q >= 50 ? "warn" : "crit"; }
+  function qualityCls(q) { return q < 0 ? "unrated" : q >= 85 ? "ok" : q >= 70 ? "warn" : q >= 50 ? "warn" : "crit"; }
   function qualityHTML(s) {
     if (!(s.tokensTotal > 0 || (s.toolCalls && s.toolCalls.length))) return "—";
     var q = s.qualityScore == null ? 100 : s.qualityScore;
+    if (q < 0) return '<span class="q-badge unrated q-click" id="ovQuality" role="button" tabindex="0" title="See how this score is computed">unrated <span class="q-badge-i">?</span></span>';
     return '<span class="q-badge ' + qualityCls(q) + ' q-click" id="ovQuality" role="button" tabindex="0" title="See how this score is computed">' + q + " · " + esc(s.qualityLabel || "") + ' <span class="q-badge-i">?</span></span>';
   }
   // showQuality opens the per-task breakdown: how the score was computed, cost
@@ -665,10 +666,10 @@
       "<b>What it is not:</b> a check that the output is correct (there is no LLM judge here). A 100 with no gate run means nothing went visibly wrong, not that the work is verified. " +
       "Turn on Auto-verify in Settings so the build/test outcome drives the score.";
     var body = '<div class="q-detail">' +
-      '<div class="q-hero"><div class="q-score ' + qualityCls(q) + '">' + q + "</div>" +
+      '<div class="q-hero"><div class="q-score ' + qualityCls(q) + '">' + (q < 0 ? "—" : q) + "</div>" +
         '<div class="q-hero-lab"><b>' + esc(s.qualityLabel || "") + "</b><span>work-quality score</span></div>" +
         '<div class="q-cost"><div class="qc-v">' + fmtUSD(s.costUsd) + '</div><div class="qc-k">cost' + (perM ? " · " + esc(perM) : "") + "</div></div></div>" +
-      '<div class="q-formula">Starts at <b>100</b>; each detected problem subtracts points.</div>' +
+      (q < 0 ? "" : '<div class="q-formula">Starts at <b>100</b>; each detected problem subtracts points.</div>') +
       '<div class="q-rows">' + rows + "</div>" +
       '<div class="q-note">' + note + "</div></div>";
     modal("Quality · " + (s.title || s.project || "task"), body);
@@ -993,7 +994,7 @@
     var worked = function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); };
     var qAvgHTML = function (sum, n) { if (!n) return "—"; var q = Math.round(sum / n); return '<span class="q-badge ' + qualityCls(q) + '">' + q + "</span>"; };
     var byProj = {};
-    sessions().forEach(function (s) { var p = s.project || "—"; if (!byProj[p]) byProj[p] = { agents: 0, tok: 0, cost: 0, qsum: 0, qn: 0 }; byProj[p].agents++; byProj[p].tok += s.tokensTotal || 0; byProj[p].cost += s.costUsd || 0; if (worked(s) && s.qualityScore != null) { byProj[p].qsum += s.qualityScore; byProj[p].qn++; } });
+    sessions().forEach(function (s) { var p = s.project || "—"; if (!byProj[p]) byProj[p] = { agents: 0, tok: 0, cost: 0, qsum: 0, qn: 0 }; byProj[p].agents++; byProj[p].tok += s.tokensTotal || 0; byProj[p].cost += s.costUsd || 0; if (worked(s) && s.qualityScore != null && s.qualityScore >= 0) { byProj[p].qsum += s.qualityScore; byProj[p].qn++; } });
     var projRows = Object.keys(byProj).map(function (p) { return { p: p, agents: byProj[p].agents, tok: byProj[p].tok, cost: byProj[p].cost, qsum: byProj[p].qsum, qn: byProj[p].qn }; })
       .filter(function (r) { return r.tok > 0 || r.cost > 0; }).sort(function (a, b) { return b.cost - a.cost; });
     if ($("insProjects")) $("insProjects").innerHTML = projRows.length
@@ -1004,7 +1005,7 @@
       : '<div class="op-empty">No project cost yet</div>';
     // avg quality per model (from the live session list) to pair with cost-by-model
     var qByModel = {};
-    sessions().forEach(function (s) { if (!worked(s) || s.qualityScore == null) return; var m = shortModel(s.model) || "—"; if (!qByModel[m]) qByModel[m] = { sum: 0, n: 0 }; qByModel[m].sum += s.qualityScore; qByModel[m].n++; });
+    sessions().forEach(function (s) { if (!worked(s) || s.qualityScore == null || s.qualityScore < 0) return; var m = shortModel(s.model) || "—"; if (!qByModel[m]) qByModel[m] = { sum: 0, n: 0 }; qByModel[m].sum += s.qualityScore; qByModel[m].n++; });
     var perMtok = function (m) { var mt = (m.tokensTotal || 0) / 1e6; return mt > 0.0001 ? "$" + (m.costUsd / mt).toFixed(2) : "—"; };
     $("insModels").innerHTML = models.length
       ? '<table class="ins-mtable"><thead><tr><th>Model</th><th>Sessions</th><th>Tokens</th><th>$/M tok</th><th>Quality</th><th>Cost</th></tr></thead><tbody>' +
@@ -1025,8 +1026,8 @@
       renderInsTrend();
     }
     // Quality & cost per session — tiles + two bar charts over the top sessions
-    var qWorked = sessions().filter(function (s) { return (s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length); });
-    var qScore = function (s) { return s.qualityScore == null ? 100 : s.qualityScore; };
+    var qWorked = sessions().filter(function (s) { return ((s.tokensTotal > 0) || (s.toolCalls && s.toolCalls.length)) && s.qualityScore != null && s.qualityScore >= 0; });
+    var qScore = function (s) { return s.qualityScore == null ? 0 : s.qualityScore; };
     var qColor = function (v) { return v >= 85 ? "var(--ok)" : v >= 60 ? "var(--busy)" : "var(--danger)"; };
     var qLabel = function (s) { return (s.title || s.project || "session").slice(0, 26); };
     var qTop = qWorked.slice().sort(function (a, b) { return (b.costUsd || 0) - (a.costUsd || 0); }).slice(0, 8);
