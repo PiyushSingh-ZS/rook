@@ -1189,13 +1189,21 @@
       '<label class="set-field"><span class="set-k">Task name</span><input class="set-in" id="sp_name" placeholder="fix-auth-bug" value="' + esc(prefill.name || "") + '" /></label>' +
       '<label class="set-field"><span class="set-k">Working directory' + (prefill.cwd ? ' <span class="set-hint" style="color:var(--ok)">auto-detected</span>' : "") + '</span>' + repoField("sp_cwd", "search your repos by name…", prefill.cwd || "") + "</label>" +
       '<label class="set-field"><span class="set-k">Agent</span><select class="set-in" id="sp_agent"><option value="claude">claude</option><option value="codex">codex (beta)</option><option value="aider">aider (beta)</option><option value="gemini">gemini (beta)</option></select></label>' +
-      '<label class="set-field"><span class="set-k">Model</span><select class="set-in" id="sp_model"><option value="default">Default (account)</option><option value="haiku">Haiku — cheapest</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label>' +
+      '<label class="set-field" id="sp_model_wrap"><span class="set-k">Model</span><select class="set-in" id="sp_model"><option value="default">Default (account)</option><option value="haiku">Haiku — cheapest</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select></label>' +
       '<label class="set-field"><span class="set-k">Initial prompt (optional)</span><textarea class="set-in" id="sp_prompt" rows="' + (prefill.prompt ? 6 : 4) + '" placeholder="what should the agent do?">' + esc(prefill.prompt || "") + '</textarea></label>' +
       '<label class="set-toggle"><input type="checkbox" id="sp_wt" ' + (prefill.worktree ? "checked" : "") + ' /><span><b>Isolate in a git worktree</b><span class="set-hint">don\'t touch your working checkout</span></span></label>' +
       '<div id="sp_docs_wrap" style="display:none"><label class="set-toggle"><input type="checkbox" id="sp_docs" checked /><span><b>Follow this repo\'s agent instructions</b><span class="set-hint" id="sp_docs_list"></span></span></label></div>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="sp_go">' + I.plus + "Launch</button></div>",
       function (ov, close) {
         if (prefill.cwd) $("sp_prompt").focus(); else $("sp_cwd").focus();
+        // model routing is Claude-only; hide it for other agents (server rejects it too)
+        function syncAgent() {
+          var claude = $("sp_agent").value === "claude";
+          if ($("sp_model_wrap")) $("sp_model_wrap").style.display = claude ? "" : "none";
+          if (!claude) $("sp_model").value = "default";
+        }
+        $("sp_agent").addEventListener("change", syncAgent);
+        syncAgent();
         // detect a repo's AGENTS.md/CLAUDE.md etc. so the agent can be told to follow them
         var docFiles = [];
         function loadDocs() {

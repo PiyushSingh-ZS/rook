@@ -69,6 +69,11 @@ func TestCreateWorktree_IsolatesCheckout(t *testing.T) {
 	if !strings.Contains(string(out), wt) {
 		t.Errorf("worktree not registered with repo:\n%s", out)
 	}
+	// it's on a named rook/ branch, not a detached HEAD
+	br, _ := exec.Command("git", "-C", wt, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if got := strings.TrimSpace(string(br)); got != "rook/review-pr-1-12345" {
+		t.Errorf("worktree should be on branch rook/review-pr-1-12345, got %q", got)
+	}
 }
 
 // TestSendInitialPrompt_WaitsForBoot verifies the prompt is delivered only after
@@ -111,6 +116,7 @@ func TestBuildLaunchCmd(t *testing.T) {
 		{name: "bad model", agent: "claude", model: "gpt-4; rm -rf", wantErr: true},
 		{name: "bad resume id", agent: "claude", resume: "not a uuid!", wantErr: true},
 		{name: "resume non-claude", agent: "codex", resume: valid, wantErr: true},
+		{name: "model non-claude", agent: "codex", model: "haiku", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

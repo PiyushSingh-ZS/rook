@@ -65,6 +65,8 @@ func removeWorktree(path string) error {
 	}
 	if main != "" {
 		_, _ = execWithTimeout("git", 15*time.Second, "-C", main, "worktree", "prune")
+		// best-effort: drop the throwaway rook/<dir> branch createWorktree made
+		_, _ = execWithTimeout("git", 10*time.Second, "-C", main, "branch", "-D", "rook/"+filepath.Base(path))
 	}
 	// Confirm it's actually gone rather than trusting the commands ran.
 	if _, err := os.Stat(path); err == nil {

@@ -70,6 +70,9 @@ func buildLaunchCmd(agent, resume, model string) (string, error) {
 		launch = cmd + " --resume " + resume
 	}
 	if model != "" && model != "default" {
+		if agent != "" && agent != "claude" {
+			return "", fmt.Errorf("model override is only supported for Claude")
+		}
 		if !validModel(model) {
 			return "", fmt.Errorf("invalid model %q", model)
 		}
@@ -110,7 +113,11 @@ func createWorktree(repoRoot, name string, ts int64) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(base, fmt.Sprintf("%s-%d", name, ts))
-	if out, err := execWithTimeout("git", 30*time.Second, "-C", repoRoot, "worktree", "add", "--detach", dir); err != nil {
+	// Put the worktree on a named branch (rook/<dir>) rather than a detached HEAD,
+	// so it reads clearly in the worktree list and git tools. removeWorktree drops
+	// the branch on cleanup. The agent can still `gh pr checkout` over it.
+	branch := "rook/" + filepath.Base(dir)
+	if out, err := execWithTimeout("git", 30*time.Second, "-C", repoRoot, "worktree", "add", "-b", branch, dir); err != nil {
 		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return dir, nil
@@ -147,12 +154,24 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 		return "", "", http.StatusBadRequest, fmt.Errorf("cwd is not a directory")
 	}
 	cmd := agentCmd(req.Agent)
+	// Fail early with a clear message if the agent binary isn't installed —
+	// otherwise tmux spawns a pane that dies instantly with "command not found".
+	if _, err := exec.LookPath(cmd); err != nil {
+		return "", "", http.StatusBadRequest, fmt.Errorf("%q is not installed / not on PATH — install it or pick another agent", cmd)
+	}
 	// launch layers --resume / --model onto the base agent command (see
 	// buildLaunchCmd). Resume restores a session in place; the initial prompt is
 	// skipped because the conversation is picked up where it left off.
 	launch, lerr := buildLaunchCmd(req.Agent, req.Resume, req.Model)
 	if lerr != nil {
 		return "", "", http.StatusBadRequest, lerr
+	}
+
+	// Check the tmux name is free BEFORE creating a worktree — otherwise a name
+	// collision fails the new-session after the worktree is already on disk,
+	// orphaning it.
+	if _, err := runTmux("has-session", "-t", req.Name); err == nil {
+		return "", "", http.StatusConflict, fmt.Errorf("an agent named %q is already running", req.Name)
 	}
 
 	// Isolate in a git worktree so the agent can `gh pr checkout` / branch without
