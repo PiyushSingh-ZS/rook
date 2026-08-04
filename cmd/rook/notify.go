@@ -59,43 +59,47 @@ func localUIURL() string {
 const stuckAfter = 10 * time.Minute
 
 func startNotifier(interval time.Duration) {
-	notifiedWait := map[string]bool{}   // waiting sessions already alerted
-	lastStatus := map[string]string{}   // previous status per session
-	waitingSince := map[string]int64{}  // ms when a session entered waiting
-	lastEscalate := map[string]int64{}  // ms of the last stuck re-alert
+	notifiedWait := map[string]bool{} // waiting sessions already alerted
+	lastStatus := map[string]string{} // previous status per session
+	lastAlert := map[string]int64{}   // ms of the last watchdog escalation
 	first := true
 	go func() {
 		for {
 			time.Sleep(interval)
 			current := map[string]bool{}
 			nowMs := time.Now().UnixMilli()
-			for _, s := range ScanSessions(1) {
+			// The watchdog's Health is the single source of "stuck"/"looping" —
+			// annotate here too rather than re-deriving a parallel timer. Enough
+			// tool calls to let it see a loop (leadingRepeat needs loopRunLen).
+			sessions := ScanSessions(loopRunLen + 5)
+			annotateHealth(sessions, nowMs)
+			for _, s := range sessions {
 				if !s.Alive {
 					continue
 				}
 				prev := lastStatus[s.SessionID]
 				lastStatus[s.SessionID] = s.Status
 
-				// waiting: alert once per episode, and keep escalating while stuck
+				// waiting: a non-intrusive heads-up the first time it enters waiting.
 				if s.Status == "waiting" {
 					current[s.SessionID] = true
-					if _, ok := waitingSince[s.SessionID]; !ok {
-						waitingSince[s.SessionID] = nowMs
-					}
 					if !notifiedWait[s.SessionID] {
 						notifiedWait[s.SessionID] = true
 						if !first {
 							notifyWaiting(s)
 						}
 					}
-					// Re-alert (urgent) every stuckAfter while it stays stuck, not
-					// once — a single escalation is easy to miss.
-					if !first && nowMs-waitingSince[s.SessionID] >= stuckAfter.Milliseconds() &&
-						nowMs-lastEscalate[s.SessionID] >= stuckAfter.Milliseconds() {
-						lastEscalate[s.SessionID] = nowMs
-						notifyStuck(s, nowMs-waitingSince[s.SessionID])
+				}
+
+				// escalate on the watchdog's alert (waiting-too-long OR looping),
+				// re-alerting every stuckAfter while it persists — one escalation
+				// is easy to miss.
+				if !first && s.Health != nil && s.Health.Level == "alert" {
+					current[s.SessionID] = true
+					if nowMs-lastAlert[s.SessionID] >= stuckAfter.Milliseconds() {
+						lastAlert[s.SessionID] = nowMs
+						notifyAlert(s)
 					}
-					continue
 				}
 
 				// finished: a session that was working OR waiting on you is now
@@ -108,8 +112,11 @@ func startNotifier(interval time.Duration) {
 			for id := range notifiedWait {
 				if !current[id] {
 					delete(notifiedWait, id)
-					delete(waitingSince, id)
-					delete(lastEscalate, id)
+				}
+			}
+			for id := range lastAlert {
+				if !current[id] {
+					delete(lastAlert, id)
 				}
 			}
 			first = false
@@ -117,14 +124,18 @@ func startNotifier(interval time.Duration) {
 	}()
 }
 
-// notifyStuck escalates an agent that has been waiting too long.
-func notifyStuck(s Session, waitedMs int64) {
-	mins := waitedMs / 60000
-	title := "⚠️ " + firstNonEmpty(s.Project, "agent") + " stuck " + itoa(int(mins)) + "m"
+// notifyAlert escalates a session the watchdog flagged (stuck waiting or looping),
+// using the watchdog's own reason so the notification and the UI agree.
+func notifyAlert(s Session) {
+	reason := "needs attention"
+	if s.Health != nil && s.Health.Reason != "" {
+		reason = s.Health.Reason
+	}
+	title := "⚠️ " + firstNonEmpty(s.Project, "agent") + " — " + reason
 	subtitle := firstNonEmpty(s.Title, s.Project)
-	body := clip(firstNonEmpty(s.Asking, s.LastPrompt, "still waiting for your input"), 240)
+	body := clip(firstNonEmpty(s.Asking, s.LastPrompt, reason), 240)
 	banner(title, subtitle, body, "Sosumi")
-	pushNtfy(firstNonEmpty(s.Project, "agent")+" waiting "+itoa(int(mins))+"m", body, "urgent")
+	pushNtfy(firstNonEmpty(s.Project, "agent")+" — "+reason, body, "urgent")
 }
 
 func firstNonEmpty(vals ...string) string {
