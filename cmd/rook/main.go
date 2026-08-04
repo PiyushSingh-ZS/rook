@@ -46,6 +46,7 @@ func main() {
 	startSummaryScheduler("http://127.0.0.1:" + port)
 	startAutoCompact()
 	startAuditIngester(60 * time.Second)
+	startGraphPoller(4 * time.Second) // self-drive task graphs without the hooks bridge
 
 	app := gofr.New()
 

@@ -236,7 +236,8 @@ func onSessionFinished(cwd string) {
 		}
 	}
 	advanceChainsForCWD(cwd) // hand off to the next chain step, if any
-	advanceGraphsForCWD(cwd) // and to the next DAG node, if any
+	// task graphs advance via startGraphPoller (session-based), so they work
+	// without the hooks bridge and never cross-complete graphs sharing a dir.
 
 	c := loadConfig()
 	if c.AutoReview {

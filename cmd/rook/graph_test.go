@@ -174,3 +174,39 @@ func TestGraphDependsOnNormalization(t *testing.T) {
 		t.Fatalf("edge %q did not resolve after normalization; ids=%v", ship.DependsOn[0].Node, []string{g.Nodes[0].ID, g.Nodes[1].ID})
 	}
 }
+
+// TestNodeAgentFinished pins graph advancement: a running node completes when its
+// own session goes idle or vanishes (past the debounce), never on a shared dir,
+// and never while its session is busy or waiting on a permission prompt.
+func TestNodeAgentFinished(t *testing.T) {
+	old := int64(10000)  // StartedAt well past the 6s debounce vs now
+	now := int64(20000)
+	run := func(status string, present bool, startedAt int64) bool {
+		m := map[string]string{}
+		if present {
+			m["g1-plan"] = status
+		}
+		n := &graphNode{Type: "agent", Status: "running", Session: "g1-plan", StartedAt: startedAt}
+		return nodeAgentFinished(n, now, m)
+	}
+	if !run("idle", true, old) {
+		t.Error("idle session past debounce should finish the node")
+	}
+	if !run("", false, old) {
+		t.Error("a vanished session should finish the node")
+	}
+	if run("busy", true, old) {
+		t.Error("a busy session is not finished")
+	}
+	if run("waiting", true, old) {
+		t.Error("a session waiting on a permission prompt is not finished")
+	}
+	if run("idle", true, 19000) { // now-StartedAt = 1s < 6s debounce
+		t.Error("within the startup debounce, don't complete")
+	}
+	// a non-running node never completes
+	nd := &graphNode{Type: "agent", Status: "done", Session: "g1-plan", StartedAt: old}
+	if nodeAgentFinished(nd, now, map[string]string{"g1-plan": "idle"}) {
+		t.Error("a non-running node must not be completed")
+	}
+}

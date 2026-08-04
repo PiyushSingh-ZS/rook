@@ -233,6 +233,10 @@ func runSchedule(g *taskGraph) {
 // pass, or a verify-gate result when the node opted into verification).
 func completeGraphNode(g *taskGraph, n *graphNode, resultOverride string) {
 	graphMu.Lock()
+	if n.Status != "running" { // idempotent: only a running node completes
+		graphMu.Unlock()
+		return
+	}
 	n.Status = "done"
 	if resultOverride != "" {
 		n.Result = resultOverride
@@ -273,12 +277,47 @@ func runVerifyForGraph(dir string) bool {
 	return res.OK
 }
 
-// advanceGraphsForCWD is the Stop-hook entry: a session finished in cwd, so
-// complete the running agent node of any graph running there (debounced so a
-// node's own startup Stop can't skip it).
-func advanceGraphsForCWD(cwd string) {
-	if cwd == "" {
-		return
+// startGraphPoller drives graph advancement WITHOUT depending on the Claude Code
+// hooks bridge: it polls each running node's own agent session and completes the
+// node when that specific session has finished its turn (idle) or vanished. This
+// fixes two things at once — graphs that "did nothing" because hooks weren't
+// installed, and the old per-cwd advance that completed unrelated graphs sharing
+// a directory (this keys on the node's unique session, never the directory).
+func startGraphPoller(interval time.Duration) {
+	go func() {
+		for {
+			time.Sleep(interval)
+			advanceGraphsBySession()
+		}
+	}()
+}
+
+// nodeAgentFinished decides whether a running agent node's turn is over: its own
+// session went idle or vanished, past the startup debounce. Keyed on the node's
+// unique session — never the directory — so sibling graphs can't cross-complete.
+// A "waiting" session (permission prompt) is NOT finished.
+func nodeAgentFinished(n *graphNode, now int64, statusByName map[string]string) bool {
+	if n.Type != "agent" || n.Status != "running" || n.Session == "" {
+		return false
+	}
+	if now-n.StartedAt < 6000 { // startup debounce
+		return false
+	}
+	st, present := statusByName[n.Session]
+	return !present || st == "idle"
+}
+
+func advanceGraphsBySession() {
+	// map each live agent's tmux session NAME -> its status
+	statusByName := map[string]string{}
+	paneSess := tmuxPaneSessions() // pane id -> session name
+	for _, s := range ScanSessions(1) {
+		if !s.Alive || s.TmuxPane == "" {
+			continue
+		}
+		if name := paneSess[s.TmuxPane]; name != "" {
+			statusByName[name] = s.Status
+		}
 	}
 	now := time.Now().UnixMilli()
 	graphMu.Lock()
@@ -290,15 +329,8 @@ func advanceGraphsForCWD(cwd string) {
 		if g.Done {
 			continue
 		}
-		runDir := g.RunCWD
-		if runDir == "" {
-			runDir = g.CWD
-		}
-		if runDir != cwd {
-			continue
-		}
 		for _, n := range g.Nodes {
-			if n.Type == "agent" && n.Status == "running" && now-n.StartedAt > 4000 {
+			if nodeAgentFinished(n, now, statusByName) {
 				pairs = append(pairs, struct {
 					g *taskGraph
 					n *graphNode
