@@ -40,6 +40,26 @@ func tmuxPanePIDs() map[int]string {
 	return m
 }
 
+// tmuxPaneSessions maps a stable pane id ("%3") to its tmux session name, so a
+// discovered agent can be traced back to the session name rook spawned it under.
+func tmuxPaneSessions() map[string]string {
+	if tmuxBin == "" {
+		return nil
+	}
+	out, err := exec.Command(tmuxBin, "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}").Output()
+	if err != nil {
+		return nil
+	}
+	m := map[string]string{}
+	for _, ln := range strings.Split(string(out), "\n") {
+		f := strings.SplitN(strings.TrimSpace(ln), "\t", 2)
+		if len(f) == 2 {
+			m[f[0]] = f[1]
+		}
+	}
+	return m
+}
+
 // parentPID returns a process's parent pid (0 if unknown).
 func parentPID(pid int) int {
 	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()

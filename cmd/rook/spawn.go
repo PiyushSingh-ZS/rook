@@ -174,6 +174,7 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 	if out, serr := runTmux("new-session", "-d", "-s", req.Name, "-x", "220", "-y", "50", "-c", runDir, launch); serr != nil {
 		return "", "", http.StatusConflict, fmt.Errorf("spawn failed: %s", tmuxErr(serr, out))
 	}
+	recordSpawn(req.Name, time.Now().UnixMilli())
 	if worktree != "" {
 		rememberWorktree(req.Name, worktree)
 	}

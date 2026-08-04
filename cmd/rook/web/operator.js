@@ -339,7 +339,7 @@
           '<span class="op-agent-status"><i class="dot ' + st + '"></i></span>' +
           '<span class="op-agent-main">' +
             '<span class="op-agent-title">' + esc(s.title || s.project || "session") + "</span>" +
-            '<span class="op-agent-meta">' + esc(s.project || "—") + " · " + esc(shortModel(s.model) || "?") + "</span>" +
+            '<span class="op-agent-meta">' + (s.spawnedByRook ? '<span class="op-agent-src" title="Spawned by rook — controllable from here">rook</span>' : '') + esc(s.project || "—") + " · " + esc(shortModel(s.model) || "?") + "</span>" +
           "</span>" +
           '<span class="op-agent-right"><span class="op-agent-tok">' + fmtTokens(s.tokensTotal) + '</span><span class="op-agent-ago">' + ago(s.updatedAt, now()) + "</span></span>" +
         "</button>";

@@ -196,6 +196,7 @@ a.op-rail-btn { text-decoration: none; }
 .op-agent-main { min-width: 0; overflow: hidden; }
 .op-agent-title { display: block; font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .op-agent-meta { display: block; font-size: 11px; color: var(--ink-3); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.op-agent-src { display: inline-block; margin-right: 5px; padding: 0 5px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); vertical-align: 1px; }
 .op-agent-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .op-agent-tok { font-size: 11.5px; color: var(--ink-2); font-family: var(--mono); }
 .op-agent-ago { font-size: 10.5px; color: var(--ink-4); font-family: var(--mono); }

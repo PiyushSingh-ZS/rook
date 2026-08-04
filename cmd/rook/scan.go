@@ -59,6 +59,7 @@ type Session struct {
 	Skills      []string   `json:"skills"`      // project-local skills for this cwd
 	TmuxPane    string     `json:"tmuxPane"`    // tmux pane target if launched in tmux
 	Controllable bool      `json:"controllable"` // can we send keystrokes to it
+	SpawnedByRook bool     `json:"spawnedByRook"` // rook launched this agent (vs started by hand in a terminal)
 	ToolCalls   []ToolCall `json:"toolCalls"`   // most recent first
 	Health      *Health    `json:"health,omitempty"` // watchdog assessment (nil if healthy)
 }
@@ -678,6 +679,9 @@ func ScanSessions(maxTools int) []Session {
 	dir := filepath.Join(claudeDir(), "sessions")
 	entries, _ := os.ReadDir(dir)
 	panes := tmuxPanePIDs()
+	paneSessions := tmuxPaneSessions()
+	spawned := spawnedNames()
+	wtDir := worktreesDir()
 	var out []Session
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -712,6 +716,7 @@ func ScanSessions(maxTools int) []Session {
 			s.TmuxPane = findPaneForPID(sf.PID, panes)
 			s.Controllable = s.TmuxPane != ""
 		}
+		s.SpawnedByRook = sessionSpawnedByRook(sf.CWD, s.TmuxPane, spawned, paneSessions, wtDir)
 		s.Skills = projectSkills(sf.CWD)
 		s.Repo = repoForDir(sf.CWD)
 		s.ReflectionAttempts = reflectionAttemptsRO(sf.CWD)
