@@ -739,12 +739,16 @@
     var s = findAgent(selectedId); if (!s) return;
     if (ws.traceLoaded && p.dataset.for === selectedId) return;
     ws.traceLoaded = true; p.dataset.for = selectedId;
-    var calls = (s.toolCalls || []).map(function (t) { return { name: t.name, summary: t.summary, ts: new Date(t.timestamp).getTime() }; }).filter(function (c) { return !isNaN(c.ts); }).sort(function (a, b) { return a.ts - b.ts; });
+    var calls = (s.toolCalls || []).map(function (t) { return { name: t.name, summary: t.summary, ts: new Date(t.timestamp).getTime(), durMs: t.durMs || 0, isError: !!t.isError }; }).filter(function (c) { return !isNaN(c.ts); }).sort(function (a, b) { return a.ts - b.ts; });
     if (calls.length < 2 || !window.rookCharts) { p.innerHTML = '<div class="op-empty">' + I.trace + '<div class="t">Not enough tool calls for a trace</div></div>'; return; }
-    var t0 = calls[0].ts, gaps = [];
-    for (var i = 0; i < calls.length - 1; i++) gaps.push(calls[i + 1].ts - calls[i].ts);
-    var sorted = gaps.slice().sort(function (a, b) { return a - b; }), median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 1000;
-    var spans = calls.map(function (c, i) { return { name: c.summary ? (c.name + " · " + c.summary).slice(0, 60) : c.name, type: c.name, startMs: c.ts - t0, durMs: i < calls.length - 1 ? calls[i + 1].ts - c.ts : median, depth: 0 }; });
+    var t0 = calls[0].ts;
+    // real per-call duration (result_ts - use_ts); estimate the few still running
+    var real = calls.map(function (c) { return c.durMs; }).filter(function (d) { return d > 0; }).sort(function (a, b) { return a - b; });
+    var estDur = real.length ? real[Math.floor(real.length / 2)] : 800;
+    var spans = calls.map(function (c) {
+      var est = !(c.durMs > 0);
+      return { name: c.summary ? (c.name + " · " + c.summary).slice(0, 60) : c.name, type: c.name, startMs: c.ts - t0, durMs: est ? estDur : c.durMs, isError: c.isError, estimated: est, depth: 0 };
+    });
     p.innerHTML = '<div class="ws-trace-mount"><div class="ov-sec-label">Execution trace · ' + calls.length + ' spans</div><div id="wsTraceChart"></div></div>';
     window.rookCharts.traceTimeline($("wsTraceChart"), { spans: spans });
   }

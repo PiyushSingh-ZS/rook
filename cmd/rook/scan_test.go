@@ -59,3 +59,28 @@ func TestReadTranscript_PendingClearedByResult(t *testing.T) {
 		t.Fatalf("completed fallback wrong: %q", got)
 	}
 }
+
+// TestReadTranscript_ToolDurationAndError pins the tool_use -> tool_result
+// correlation: a tool's wall-clock duration and error flag come from matching
+// its result by tool_use_id.
+func TestReadTranscript_ToolDurationAndError(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "dur.jsonl")
+	os.WriteFile(f, []byte(
+		`{"type":"assistant","timestamp":"2026-07-03T10:00:00Z","message":{"model":"m","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"go test ./..."}}]}}`+"\n"+
+			`{"type":"user","timestamp":"2026-07-03T10:00:03Z","toolUseResult":"x","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","is_error":true}]}}`+"\n"), 0o644)
+	p := readTranscript(f)
+	if len(p.tools) != 1 {
+		t.Fatalf("want 1 tool, got %d", len(p.tools))
+	}
+	tc := p.tools[0]
+	if tc.ID != "tu_1" {
+		t.Errorf("tool id = %q, want tu_1", tc.ID)
+	}
+	if tc.DurMs != 3000 {
+		t.Errorf("duration = %dms, want 3000", tc.DurMs)
+	}
+	if !tc.IsError {
+		t.Error("tool should be flagged is_error from its correlated result")
+	}
+}

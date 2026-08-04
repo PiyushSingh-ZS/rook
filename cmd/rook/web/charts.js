@@ -455,7 +455,8 @@
     spans.forEach(function (s, i) {
       var y = padT + i * rowH;
       var depth = Math.max(0, +s.depth || 0);
-      var color = typeColor(s.type || 'tool');
+      // errored calls read red regardless of type; that's the signal you want
+      var color = s.isError ? '#e5533a' : typeColor(s.type || 'tool');
       var st = +s.startMs || 0, dur = +s.durMs || 0;
 
       // row hover band
@@ -477,11 +478,14 @@
       var by = y + 5, bh = rowH - 10;
       var bar = el('rect', { x: bx, y: by, width: bw, height: bh, rx: 4, class: 'rc-tl-bar' });
       bar.style.fill = color;
+      // still-running (no result yet) → estimated width, drawn faint + dashed
+      if (s.estimated) { bar.style.opacity = '0.4'; bar.setAttribute('stroke', color); bar.setAttribute('stroke-dasharray', '3 2'); }
       svg.appendChild(bar);
 
       var cost = s.costUsd != null ? '<span class="rc-tip-sub">$' + (+s.costUsd).toFixed(4) + '</span>' : '';
+      var note = s.isError ? '<span class="rc-tip-sub" style="color:#e5533a">error</span>' : (s.estimated ? '<span class="rc-tip-sub">running · est.</span>' : '');
       var html = '<b>' + esc(s.name) + '</b>' +
-        '<span class="rc-tip-sub">' + esc(s.type || 'tool') + '</span>' + cost +
+        '<span class="rc-tip-sub">' + esc(s.type || 'tool') + '</span>' + cost + note +
         '<span class="rc-tip-v">' + fmtDur(dur) + '</span>';
       var enter = function (e) { band.classList.add('rc-on'); showTip(html, e); };
       band.addEventListener('pointerenter', enter);

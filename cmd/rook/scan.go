@@ -68,7 +68,10 @@ type Session struct {
 type ToolCall struct {
 	Name      string `json:"name"`
 	Summary   string `json:"summary"`
-	Timestamp int64  `json:"timestamp"` // ms epoch
+	Timestamp int64  `json:"timestamp"`     // ms epoch of the tool_use
+	ID        string `json:"id,omitempty"`  // tool_use id, for correlating its result + dedup
+	DurMs     int64  `json:"durMs,omitempty"`   // wall time until its tool_result arrived
+	IsError   bool   `json:"isError,omitempty"` // its result was flagged is_error
 }
 
 // TokenWindow is rolling usage over a fixed lookback (e.g. 5h, 7d).
@@ -222,6 +225,7 @@ func readTranscript(path string) *parsedTranscript {
 	defer f.Close()
 
 	p := &parsedTranscript{}
+	toolIdx := map[string]int{} // tool_use id -> index in p.tools, to back-fill dur/error
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // allow long lines
 	for sc.Scan() {
@@ -251,6 +255,16 @@ func readTranscript(path string) *parsedTranscript {
 			tr, te := countToolResults(tl.Message.Content)
 			p.toolResults += tr
 			p.toolErrors += te
+			// correlate each result back to its tool_use for real duration + error
+			rts := parseTS(tl.Timestamp)
+			for _, r := range parseToolResults(tl.Message.Content) {
+				if idx, ok := toolIdx[r.ToolUseID]; ok {
+					if rts > 0 && p.tools[idx].Timestamp > 0 && rts >= p.tools[idx].Timestamp {
+						p.tools[idx].DurMs = rts - p.tools[idx].Timestamp
+					}
+					p.tools[idx].IsError = r.IsError
+				}
+			}
 		}
 		if tl.Type != "assistant" || tl.Message == nil {
 			continue
@@ -275,7 +289,13 @@ func readTranscript(path string) *parsedTranscript {
 		}
 		// extract tool_use blocks + latest assistant text + changed files
 		tcs, txt, changed, lastFull := extractContent(tl.Message.Content, ts)
+		base := len(p.tools)
 		p.tools = append(p.tools, tcs...)
+		for i, tc := range tcs {
+			if tc.ID != "" {
+				toolIdx[tc.ID] = base + i
+			}
+		}
 		if len(tcs) > 0 {
 			// newest tool_use is pending until a toolUseResult line clears it
 			p.pendingTool = tcs[len(tcs)-1]
@@ -311,6 +331,36 @@ type contentBlock struct {
 	Name  string          `json:"name"`
 	Text  string          `json:"text"`
 	Input json.RawMessage `json:"input"`
+	ID    string          `json:"id"` // tool_use id
+}
+
+// toolResultRef is a tool_result linked back to the tool_use it answers.
+type toolResultRef struct {
+	ToolUseID string
+	IsError   bool
+}
+
+// parseToolResults extracts tool_result blocks with the id they answer, so a
+// result's timestamp + error can be correlated to its originating tool_use.
+func parseToolResults(raw json.RawMessage) []toolResultRef {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blocks []struct {
+		Type      string `json:"type"`
+		ToolUseID string `json:"tool_use_id"`
+		IsError   bool   `json:"is_error"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var out []toolResultRef
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			out = append(out, toolResultRef{ToolUseID: b.ToolUseID, IsError: b.IsError})
+		}
+	}
+	return out
 }
 
 // countToolResults counts tool_result blocks in a message's content and how many
@@ -358,6 +408,7 @@ func extractContent(raw json.RawMessage, ts int64) ([]ToolCall, string, []string
 				Name:      b.Name,
 				Summary:   summarizeTool(b.Name, b.Input),
 				Timestamp: ts,
+				ID:        b.ID,
 			})
 			lastFull = toolFull(b.Name, b.Input)
 			if f := changedFile(b.Name, b.Input); f != "" {
