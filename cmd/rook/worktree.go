@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,8 +43,10 @@ func worktreesDir() string {
 }
 
 // removeWorktree tears down a git worktree: resolve its main repo, run
-// `git worktree remove --force`, then clean up any remnants and prune.
-func removeWorktree(path string) {
+// `git worktree remove --force`, then clean up any remnants and prune. Returns
+// an error if the directory is still present afterwards — the caller used to
+// discard every failure and report success over a no-op.
+func removeWorktree(path string) error {
 	main := ""
 	if out, err := execWithTimeout("git", 10*time.Second, "-C", path, "rev-parse", "--git-common-dir"); err == nil {
 		gitdir := strings.TrimSpace(string(out))
@@ -56,11 +59,28 @@ func removeWorktree(path string) {
 		_, _ = execWithTimeout("git", 30*time.Second, "-C", main, "worktree", "remove", "--force", path)
 	}
 	if _, err := os.Stat(path); err == nil {
-		_ = os.RemoveAll(path)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
 	}
 	if main != "" {
 		_, _ = execWithTimeout("git", 15*time.Second, "-C", main, "worktree", "prune")
 	}
+	// Confirm it's actually gone rather than trusting the commands ran.
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("worktree still present after removal: %s", path)
+	}
+	return nil
+}
+
+// worktreeDirty reports whether a worktree has uncommitted changes, so a delete
+// can refuse to silently discard work. Unreadable/non-git → not dirty (allow).
+func worktreeDirty(path string) bool {
+	out, err := execWithTimeout("git", 8*time.Second, "-C", path, "status", "--porcelain")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 // Worktree describes an isolated agent worktree under ~/.rook/worktrees.
@@ -111,12 +131,27 @@ func handleWorktreesGet(ctx *gofr.Context) (any, error) {
 	return rawJSON(listWorktrees())
 }
 
+// underWorktreesDir reports whether p is a CHILD of the managed worktrees dir.
+// The trailing separator guards against a sibling like "<base>-evil" slipping
+// past a bare prefix check.
+func underWorktreesDir(p string) bool {
+	if p == "" {
+		return false
+	}
+	return strings.HasPrefix(filepath.Clean(p), worktreesDir()+string(filepath.Separator))
+}
+
 func handleWorktreesDelete(ctx *gofr.Context) (any, error) {
 	p := ctx.Param("path")
-	// only allow removing paths under the managed worktrees dir
-	if p == "" || !strings.HasPrefix(filepath.Clean(p), worktreesDir()) {
+	clean := filepath.Clean(p)
+	if !underWorktreesDir(p) {
 		return nil, errf(http.StatusBadRequest, "path must be under the rook worktrees dir")
 	}
-	removeWorktree(p)
+	if ctx.Param("force") != "1" && worktreeDirty(clean) {
+		return nil, errf(http.StatusConflict, "worktree has uncommitted changes — pass force=1 to delete anyway")
+	}
+	if err := removeWorktree(clean); err != nil {
+		return nil, errf(http.StatusInternalServerError, "%v", err)
+	}
 	return rawJSON(map[string]any{"ok": true})
 }

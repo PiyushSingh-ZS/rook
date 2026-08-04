@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -389,7 +390,11 @@ func handleKill(ctx *gofr.Context) (any, error) {
 	// auto-remove the isolated worktree this agent ran in, if any
 	if wt := worktreeForTarget(pane); wt != "" {
 		forgetWorktree(pane)
-		go removeWorktree(wt)
+		go func() {
+			if err := removeWorktree(wt); err != nil {
+				log.Printf("worktree cleanup failed for %s: %v", wt, err)
+			}
+		}()
 	}
 	return rawJSON(map[string]any{"ok": true, "pane": pane})
 }

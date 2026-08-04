@@ -289,21 +289,34 @@
     drawWorktrees();
 
     (async function () {
-      var ok = 0;
-      for (var i = 0; i < paths.length; i++) {
+      async function del(p, force) {
         try {
-          var r = await fetch("/api/worktrees?path=" + encodeURIComponent(paths[i]), { method: "DELETE" });
-          if (r.ok) ok++;
-        } catch (e) {
-          /* count as failure */
+          var r = await fetch("/api/worktrees?path=" + encodeURIComponent(p) + (force ? "&force=1" : ""), { method: "DELETE" });
+          if (r.ok) return "ok";
+          if (r.status === 409) return "dirty"; // uncommitted changes
+          return "failed";
+        } catch (e) { return "failed"; }
+      }
+      var ok = 0, failed = 0, dirty = [];
+      for (var i = 0; i < paths.length; i++) {
+        var res = await del(paths[i], false);
+        if (res === "ok") ok++;
+        else if (res === "dirty") dirty.push(paths[i]);
+        else failed++;
+      }
+      // worktrees with uncommitted work aren't deleted silently — confirm first
+      if (dirty.length && window.confirm(dirty.length + " worktree" + (dirty.length === 1 ? " has" : "s have") + " uncommitted changes. Delete anyway and discard that work?")) {
+        for (var k = 0; k < dirty.length; k++) {
+          if (await del(dirty[k], true) === "ok") ok++; else failed++;
         }
+        dirty = [];
       }
       paths.forEach(function (p) { view.selected.delete(p); });
       view.deleting = false;
-      view.ctx.toast(
-        "Removed " + ok + " worktree" + (ok === 1 ? "" : "s") + (ok < paths.length ? ", " + (paths.length - ok) + " failed" : ""),
-        ok < paths.length ? "err" : "ok"
-      );
+      var parts = ["Removed " + ok];
+      if (failed) parts.push(failed + " failed");
+      if (dirty.length) parts.push(dirty.length + " kept (uncommitted)");
+      view.ctx.toast(parts.join(" · "), (failed || dirty.length) ? "err" : "ok");
       refreshWorktrees();
     })();
   }
