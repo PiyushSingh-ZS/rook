@@ -237,7 +237,10 @@
       trySelectSpawned(); // grab a just-launched agent as soon as it appears
       renderRoster();
       if (ws.id !== selectedId) buildWorkspace();
-      else if (ws.tab === "overview") renderOverview(); // live-refresh overview only
+      else {
+        refreshWorkspaceHead(findAgent(selectedId)); // keep the status pill / tokens / Stop live
+        if (ws.tab === "overview") renderOverview(); // live-refresh overview only
+      }
     } else if (activeView === "insights") {
       renderInsights();
     } else if (activeView === "board") {
@@ -423,6 +426,38 @@
     $("wsLogs") && $("wsLogs").addEventListener("click", function () { window.open("/api/logs?session=" + encodeURIComponent(s.sessionId), "_blank"); });
     $("wsStop") && $("wsStop").addEventListener("click", function () { if (confirm("Stop this agent? This kills its tmux pane.")) killAgent(s); });
     activateTab(ws.tab);
+  }
+
+  // refreshWorkspaceHead updates the live bits of the detail header in place on
+  // each poll — status pill, tokens/cost, and the Stop button's presence —
+  // WITHOUT rebuilding the workspace (which would tear down the terminal socket
+  // and reset the open tab). buildWorkspace only runs on selection, so without
+  // this the header pill stays frozen at the status it had when you opened it.
+  function refreshWorkspaceHead(s) {
+    if (!s) return;
+    var head = document.querySelector(".ws-head"); if (!head) return;
+    var st = statusOf(s);
+    var pill = head.querySelector(".ws-title .pill");
+    if (pill && (pill.textContent !== st || pill.className !== "pill " + st)) {
+      pill.className = "pill " + st;
+      pill.textContent = st;
+    }
+    var sub = head.querySelector(".ws-sub");
+    if (sub) {
+      sub.innerHTML = "<span>" + esc(s.project || "—") + "</span><span>" + esc(shortModel(s.model) || "?") + "</span><span>" + fmtTokens(s.tokensTotal) + " tok</span><span>" + fmtUSD(s.costUsd) + "</span>";
+    }
+    var actions = head.querySelector(".ws-actions");
+    if (actions) {
+      var hasStop = !!actions.querySelector("#wsStop");
+      var wantStop = !!(s.controllable && s.alive);
+      if (wantStop && !hasStop) {
+        var b = el("button", "btn sm danger", I.stop + "Stop"); b.id = "wsStop";
+        b.addEventListener("click", function () { if (confirm("Stop this agent? This kills its tmux pane.")) killAgent(s); });
+        actions.appendChild(b);
+      } else if (!wantStop && hasStop) {
+        actions.querySelector("#wsStop").remove();
+      }
+    }
   }
 
   function switchTab(tab) { ws.tab = tab; document.querySelectorAll(".ws-tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === tab); }); activateTab(tab); }
