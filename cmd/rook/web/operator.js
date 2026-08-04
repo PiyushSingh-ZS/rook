@@ -331,26 +331,54 @@
     if (rosterFilter) ss = ss.filter(function (s) { return ((s.title || "") + " " + (s.project || "") + " " + (s.model || "")).toLowerCase().indexOf(rosterFilter) >= 0; });
     var by = { needs: [], working: [], idle: [], done: [] };
     ss.forEach(function (s) { by[groupOf(s)].push(s); });
-    Object.keys(by).forEach(function (k) { by[k].sort(function (a, b) { return b.updatedAt - a.updatedAt; }); });
+    Object.keys(by).forEach(function (k) {
+      by[k].sort(function (a, b) {
+        // Needs-you: most-stuck first (oldest update = blocked longest). Others: newest first.
+        return k === "needs" ? (a.updatedAt || 0) - (b.updatedAt || 0) : (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
+    });
     var html = "";
     GROUPS.forEach(function (g) {
       var arr = by[g[0]]; if (!arr.length) return;
-      html += '<div class="op-group-label ' + (g[0] === "needs" ? "needs" : "") + '">' + esc(g[1]) + '<span class="cnt">' + arr.length + "</span></div>";
+      var needs = g[0] === "needs";
+      html += '<div class="op-group-label ' + (needs ? "needs" : "") + '">' + esc(g[1]) + '<span class="cnt">' + arr.length + "</span></div>";
       arr.forEach(function (s) {
         var st = statusOf(s);
-        html += '<button class="op-agent ' + (g[0] === "needs" ? "needs " : "") + (s.sessionId === selectedId ? "sel" : "") + '" data-id="' + esc(s.sessionId) + '">' +
+        var agoTxt = (needs && st === "waiting") ? "blocked " + ago(s.updatedAt, now()) : ago(s.updatedAt, now());
+        // what a waiting agent is asking for — the reason it needs you
+        var ask = (needs && s.asking) ? '<span class="op-agent-ask">' + esc(s.asking.replace(/\s+/g, " ").trim().slice(0, 90)) + "</span>" : "";
+        // inline Allow/Deny for controllable, alive, needs-you agents (spans, not
+        // nested buttons; the click stopsPropagation so it doesn't also select)
+        var acts = (needs && s.controllable && s.alive)
+          ? '<span class="op-agent-acts">' +
+              '<span class="op-mini allow" data-act="allow" data-id="' + esc(s.sessionId) + '" role="button" tabindex="0">Allow</span>' +
+              '<span class="op-mini deny" data-act="deny" data-id="' + esc(s.sessionId) + '" role="button" tabindex="0">Deny</span>' +
+            "</span>"
+          : "";
+        html += '<button class="op-agent ' + (needs ? "needs " : "") + (s.sessionId === selectedId ? "sel" : "") + '" data-id="' + esc(s.sessionId) + '">' +
           '<span class="op-agent-status"><i class="dot ' + st + '"></i></span>' +
           '<span class="op-agent-main">' +
             '<span class="op-agent-title">' + esc(s.title || s.project || "session") + "</span>" +
             '<span class="op-agent-meta">' + (s.spawnedByRook ? '<span class="op-agent-src" title="Spawned by rook — controllable from here">rook</span>' : '') + esc(s.project || "—") + " · " + esc(shortModel(s.model) || "?") + "</span>" +
+            ask + acts +
           "</span>" +
-          '<span class="op-agent-right"><span class="op-agent-tok">' + fmtTokens(s.tokensTotal) + '</span><span class="op-agent-ago">' + ago(s.updatedAt, now()) + "</span></span>" +
+          '<span class="op-agent-right"><span class="op-agent-tok">' + fmtTokens(s.tokensTotal) + '</span><span class="op-agent-ago">' + agoTxt + "</span></span>" +
         "</button>";
       });
     });
     if (!html) html = '<div class="op-empty">' + I.inbox + '<div class="t">No agents</div><div class="h">launch one with a tmux session</div></div>';
     list.innerHTML = html;
     list.querySelectorAll(".op-agent").forEach(function (b) { b.addEventListener("click", function () { selectAgent(b.dataset.id); }); });
+    list.querySelectorAll(".op-mini").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation(); // act without navigating to the agent
+        var act = el.dataset.act;
+        respond(el.dataset.id, act, "").then(function (res) {
+          var ok = res.ok && res.landed;
+          toast(!res.ok ? (act === "allow" ? "Allow failed" : "Deny failed") : res.landed ? (act === "allow" ? "Allowed" : "Denied") : "Sent — the agent's screen didn't change", ok ? "ok" : "");
+        });
+      });
+    });
   }
 
   function selectAgent(id) {
