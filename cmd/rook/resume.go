@@ -69,8 +69,9 @@ func transcriptMeta(path string) (cwd, title string) {
 		title = firstPrompt
 	}
 	title = strings.TrimSpace(strings.Join(strings.Fields(title), " "))
-	if len(title) > 90 {
-		title = title[:90] + "…"
+	// rune-safe cut: title[:90] could split a multibyte UTF-8 char into invalid bytes
+	if r := []rune(title); len(r) > 90 {
+		title = string(r[:90]) + "…"
 	}
 	return cwd, title
 }
@@ -119,6 +120,11 @@ func listPastSessions(limit int) []pastSession {
 	for _, f := range files {
 		fi, err := os.Stat(f)
 		if err != nil {
+			continue
+		}
+		// skip stub transcripts (a session-start line and little else) — they
+		// show up as bare project-name rows with nothing to resume into.
+		if fi.Size() < 1024 {
 			continue
 		}
 		metas = append(metas, fileMeta{f, fi.ModTime().UnixMilli()})
