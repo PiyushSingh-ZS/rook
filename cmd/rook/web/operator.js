@@ -784,6 +784,7 @@
           '<div class="ws-th-text">' + esc(c.text) + "</div>" +
           '<div class="ws-th-actions"><span class="ws-th-state ' + c.state + '">' + c.state + "</span>" +
             (c.state === "open" ? '<button class="btn xs" data-act="send">Send</button>' : "") +
+            (c.state === "sent" ? '<button class="btn xs" data-act="send" title="Re-send this comment to the agent">Nudge</button>' : "") +
             (c.state === "addressed" ? '<button class="btn xs" data-act="reopen">Reopen</button>' : '<button class="btn xs" data-act="addressed">Mark done</button>') +
             '<button class="btn xs danger" data-act="del" title="Delete">×</button>' +
           "</div></div>";

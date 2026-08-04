@@ -344,6 +344,43 @@ func computeDiff(dir string) (diffResult, error) {
 func mustOut(out string, _ error) string { return out }
 
 // handleDiff backs the review surface: GET /api/diff?path=<worktree-or-repo>.
+// diffCache memoizes computeDiff per (dir, HEAD) for a short TTL, so opening the
+// Diff tab (which can double-fire) doesn't run two sequential ~20s `gh pr diff`
+// calls. Invalidated when HEAD moves; the short TTL bounds working-tree staleness.
+type diffCacheEntry struct {
+	at   time.Time
+	head string
+	res  diffResult
+}
+
+var (
+	diffCacheMu sync.Mutex
+	diffCache   = map[string]diffCacheEntry{}
+)
+
+const diffCacheTTL = 3 * time.Second
+
+func cachedDiff(dir string) (diffResult, error) {
+	head := ""
+	if out, err := execWithTimeout("git", 5*time.Second, "-C", dir, "rev-parse", "HEAD"); err == nil {
+		head = strings.TrimSpace(string(out))
+	}
+	diffCacheMu.Lock()
+	e, ok := diffCache[dir]
+	diffCacheMu.Unlock()
+	if ok && e.head == head && time.Since(e.at) < diffCacheTTL {
+		return e.res, nil
+	}
+	res, err := computeDiff(dir)
+	if err != nil {
+		return res, err
+	}
+	diffCacheMu.Lock()
+	diffCache[dir] = diffCacheEntry{at: time.Now(), head: head, res: res}
+	diffCacheMu.Unlock()
+	return res, nil
+}
+
 func handleDiff(ctx *gofr.Context) (any, error) {
 	p := ctx.Param("path")
 	if p == "" {
@@ -354,7 +391,7 @@ func handleDiff(ctx *gofr.Context) (any, error) {
 	if err != nil || !fi.IsDir() {
 		return nil, errf(http.StatusBadRequest, "path is not a directory")
 	}
-	res, err := computeDiff(p)
+	res, err := cachedDiff(p)
 	if err != nil {
 		return nil, err
 	}
