@@ -16,6 +16,11 @@ func pricePerToken(model string) rate {
 	case strings.Contains(m, "opus"):
 		return rate{in: 15e-6, out: 75e-6, cacheRead: 1.5e-6, cacheWrite: 18.75e-6}
 	case strings.Contains(m, "haiku"):
+		// Haiku 4.5 ($1/$5) is priced above Haiku 3.5 ($0.80/$4); the bare "haiku"
+		// substring priced 4.5 usage at the older, cheaper rate. Match 4.x first.
+		if strings.Contains(m, "haiku-4") || strings.Contains(m, "4-5-haiku") {
+			return rate{in: 1e-6, out: 5e-6, cacheRead: 0.1e-6, cacheWrite: 1.25e-6}
+		}
 		return rate{in: 0.8e-6, out: 4e-6, cacheRead: 0.08e-6, cacheWrite: 1e-6}
 	case strings.Contains(m, "sonnet"):
 		return rate{in: 3e-6, out: 15e-6, cacheRead: 0.3e-6, cacheWrite: 3.75e-6}
