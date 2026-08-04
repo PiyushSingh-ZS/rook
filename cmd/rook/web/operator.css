@@ -348,6 +348,7 @@ a.op-rail-btn { text-decoration: none; }
 .pal-group { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-4); padding: 10px 10px 4px; }
 .pal-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 8px; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
 .pal-item .pi-dot { width: 8px; }
+.pal-item .pi-title mark { background: transparent; color: var(--accent); font-weight: 700; }
 .pal-item .pi-main { flex: 1; min-width: 0; }
 .pal-item .pi-title { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-item .pi-sub { font-size: 11px; color: var(--ink-4); font-family: var(--mono); }

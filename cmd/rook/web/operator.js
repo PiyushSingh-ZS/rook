@@ -1401,6 +1401,30 @@
       { g: "Go", title: "Settings", sub: "config · hooks · integrations", run: function () { setView("settings"); } }
     ];
   }
+  // fuzzyScore does a subsequence match of q against text, rewarding consecutive
+  // hits and word-boundary starts. Returns {score, hit:[indices]} or null (no match).
+  function fuzzyScore(q, text) {
+    if (!q) return { score: 0, hit: [] };
+    var t = text.toLowerCase(), ti = 0, score = 0, streak = 0, hit = [];
+    for (var qi = 0; qi < q.length; qi++) {
+      var found = -1;
+      for (var k = ti; k < t.length; k++) { if (t[k] === q[qi]) { found = k; break; } }
+      if (found === -1) return null;
+      hit.push(found);
+      if (found === ti && qi > 0) { streak++; score += 2 + streak; } else { streak = 0; score += 1; }
+      if (found === 0 || /[\s\W_]/.test(t[found - 1])) score += 3; // word-boundary bonus
+      ti = found + 1;
+    }
+    return { score: score, hit: hit };
+  }
+  // markHits wraps matched characters of text in <mark> (text is already trusted-escaped per char).
+  function markHits(text, hit) {
+    if (!hit || !hit.length) return esc(text);
+    var out = "", last = 0;
+    hit.forEach(function (idx) { out += esc(text.slice(last, idx)) + "<mark>" + esc(text[idx]) + "</mark>"; last = idx + 1; });
+    return out + esc(text.slice(last));
+  }
+
   function renderPaletteList() {
     var q = palQuery.toLowerCase();
     var agents = sessions().map(function (s) { return { g: "Agents", title: s.title || s.project || "session", sub: esc(s.project || "") + " · " + statusOf(s), st: statusOf(s), run: function () { setView("operator"); selectAgent(s.sessionId); }, _s: ((s.title || "") + " " + (s.project || "")).toLowerCase() }; });
@@ -1410,24 +1434,35 @@
       var when = s.updatedAt ? ago(s.updatedAt, now()) + " ago" : "";
       return { g: "Resume closed session", title: s.title || s.project || "session", sub: (s.project || "") + (when ? " · " + when : ""), run: function () { resumeSession(s.sessionId, s.title || s.project); }, _s: ((s.title || "") + " " + (s.project || "") + " " + (s.cwd || "") + " resume reopen closed session").toLowerCase() };
     });
-    var all;
+    var all, grouped = true;
     if (palResumeOnly && !q) {
       all = resumes; // opened via the Resume button — show only closed sessions
+    } else if (q) {
+      // fuzzy-rank across everything; flat (ranked) order, so no group headers
+      grouped = false;
+      all = cmds.concat(agents).concat(resumes).map(function (it) {
+        var m = fuzzyScore(q, it._s); if (!m) return null;
+        var tm = fuzzyScore(q, (it.title || "").toLowerCase());
+        it._thit = tm ? tm.hit : [];
+        return { it: it, score: m.score };
+      }).filter(Boolean).sort(function (a, b) { return b.score - a.score; }).map(function (x) { return x.it; });
     } else {
-      all = cmds.concat(agents).concat(resumes).filter(function (it) { return !q || it._s.indexOf(q) >= 0; });
+      all = cmds.concat(agents).concat(resumes);
     }
     palItems = all; if (palIdx >= all.length) palIdx = Math.max(0, all.length - 1);
     var list = $("palList"), html = "", lastG = null;
     all.forEach(function (it, i) {
-      if (it.g !== lastG) { html += '<div class="pal-group">' + esc(it.g) + "</div>"; lastG = it.g; }
+      if (grouped && it.g !== lastG) { html += '<div class="pal-group">' + esc(it.g) + "</div>"; lastG = it.g; }
+      var title = q ? markHits(it.title || "", it._thit) : esc(it.title || "");
       html += '<div class="pal-item ' + (i === palIdx ? "act" : "") + '" data-i="' + i + '">' +
         (it.st ? '<i class="dot ' + it.st + ' pi-dot"></i>' : (it.g === "Go" ? I.grid : it.g === "Resume closed session" ? I.resume : I.send)) +
-        '<span class="pi-main"><span class="pi-title">' + esc(it.title) + '</span>' + (it.sub ? '<span class="pi-sub">' + esc(it.sub) + "</span>" : "") + "</span>" +
+        '<span class="pi-main"><span class="pi-title">' + title + '</span>' + (it.sub ? '<span class="pi-sub">' + esc(it.sub) + "</span>" : "") + "</span>" +
         (it.key ? '<span class="pi-key">' + esc(it.key) + "</span>" : "") + "</div>";
     });
     var emptyMsg = palResumeOnly ? (closedSessions.length ? "No closed sessions match" : "No closed sessions to reopen yet") : "No matches";
     list.innerHTML = html || '<div class="op-empty" style="padding:30px">' + emptyMsg + "</div>";
     list.querySelectorAll(".pal-item").forEach(function (n) { n.addEventListener("click", function () { runPalette(parseInt(n.dataset.i, 10)); }); });
+    var act = list.querySelector(".pal-item.act"); if (act) act.scrollIntoView({ block: "nearest" });
   }
   function runPalette(i) { var it = palItems[i]; if (!it) return; closePalette(); it.run(); }
 
@@ -1460,19 +1495,18 @@
   }
   // g-prefix jump targets (g o, g i, …) — one per view.
   var GO_KEYS = { o: "operator", i: "insights", b: "board", t: "graph", h: "github", s: "summaries", d: "dev", a: "audit", w: "workspace", ",": "settings" };
+  var VIEW_LABELS = { operator: "Operator", insights: "Insights", board: "Board", graph: "Task graphs", github: "GitHub", summaries: "Summaries", dev: "Dev servers", audit: "Audit", workspace: "Workspace", settings: "Settings" };
   function showShortcuts() {
+    // g-nav rows are generated from the keymap so the help can't drift from it
+    var goRows = Object.keys(GO_KEYS).map(function (k) { return ["g " + k, "go to " + (VIEW_LABELS[GO_KEYS[k]] || GO_KEYS[k])]; });
     var rows = [
       ["⌘K", "command palette — search agents, jump, run a command"],
       ["?", "this shortcuts help"],
       ["/", "focus the agent filter"],
       ["j / k", "move down / up the roster"],
       ["↑ / ↓", "move down / up the roster"],
-      ["1 – 5", "switch workspace tabs (Overview…Files)"],
-      ["g o", "go to Operator"], ["g i", "go to Insights"], ["g b", "go to Board"],
-      ["g h", "go to GitHub"], ["g s", "go to Summaries"], ["g d", "go to Dev servers"],
-      ["g a", "go to Audit"], ["g w", "go to Workspace"], ["g ,", "go to Settings"],
-      ["esc", "close this / the palette"]
-    ];
+      ["1 – 5", "switch workspace tabs (Overview…Files)"]
+    ].concat(goRows).concat([["esc", "close this / the palette"]]);
     modal("Keyboard shortcuts",
       '<div class="kbd-grid">' + rows.map(function (r) {
         return '<div class="kbd-row"><kbd>' + esc(r[0]) + "</kbd><span>" + esc(r[1]) + "</span></div>";
