@@ -112,6 +112,7 @@
       ".op-audit th.proj,.op-audit td.proj{width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}",
       ".op-audit td.cmd{max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-family:var(--mono);font-size:11.5px}",
       ".op-audit td.cmd .rf{color:var(--danger);font-weight:600;margin-right:6px}",
+      ".op-audit td.cmd .aud-tool{color:var(--busy);border:1px solid currentColor;border-radius:4px;padding:0 4px;font-size:10px;font-weight:600}",
       ".op-audit th.act,.op-audit td.act{width:112px;text-align:right;white-space:nowrap}",
       ".op-audit td.act .row-act{display:inline-flex;gap:6px;justify-content:flex-end}",
       ".op-audit .aud-msg{position:absolute;inset:0;display:grid;place-items:center}"
@@ -324,7 +325,9 @@
             (r.session ? '<span class="sess" title="' + esc(r.session) + '">' + esc(shortSess(r.session)) + "</span>" : "") + "</td>" +
           '<td class="proj" title="' + esc(r.project || "") + '">' + esc(r.project || "—") + "</td>" +
           '<td class="cmd" title="' + esc(cmd) + '">' +
-            (risky ? '<span class="rf" title="' + esc(reasons.join("; ")) + '">!</span>' : "") + esc(cmd) + "</td>" +
+            (risky ? '<span class="rf" title="' + esc(reasons.join("; ")) + '">!</span>' : "") +
+            (r.tool && r.tool !== "Bash" && r.tool !== "Shell" ? '<span class="aud-tool">' + esc(r.tool) + "</span> " : "") +
+            esc(cmd) + "</td>" +
           '<td class="act"><span class="row-act">' +
             '<button class="btn sm" data-act="copy" data-idx="' + i + '">Copy</button>' +
             (r.session ? '<button class="btn sm" data-act="open" data-idx="' + i + '">' + A.ctx.icon.external + "Open</button>" : "") +

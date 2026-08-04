@@ -63,6 +63,9 @@ func initDB() error {
 	)`); err != nil {
 		return err
 	}
+	// additive: record which tool produced the row (audit widened past Bash).
+	// Ignore the error when the column already exists on an older database.
+	_, _ = d.Exec(`ALTER TABLE audit_cmds ADD COLUMN tool TEXT`)
 	if _, err := d.Exec(reviewCommentsSchema); err != nil {
 		return err
 	}
