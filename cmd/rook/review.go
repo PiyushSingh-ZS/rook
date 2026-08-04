@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,9 +33,16 @@ var reviewLenses = []string{
 // reviewPrompt is the read-only reviewer prompt pointed at a worktree's changes.
 // The output is deliberately DISTILLED (the isolate boundary — 7.6): the reviewer
 // returns a short, actionable verdict rather than dumping its whole trajectory.
-func reviewPrompt(lens string) string {
+func reviewPrompt(lens, base string) string {
+	// Include COMMITTED work, not just uncommitted. If the agent committed its
+	// changes, `git diff` alone is empty and the reviewer would SHIP on nothing —
+	// so review against the fork base when we know it.
+	how := "run `git diff` and `git diff --staged` and `git status`"
+	if base != "" && base != "HEAD" {
+		how = "run `git diff " + base + "...HEAD` (committed changes since the fork point) AND `git diff` and `git diff --staged` (uncommitted) and `git status`"
+	}
 	lines := []string{
-		"You are a strict, read-only code reviewer. Review the UNCOMMITTED and committed changes in this working tree (run `git diff` and `git diff --staged`, and `git status`).",
+		"You are a strict, read-only code reviewer. Review ALL changes in this working tree — " + how + ". If the diff is empty, say so explicitly rather than approving.",
 		"Report concrete issues only, grouped as: Correctness/bugs, Security, Missing tests, Style. Cite file:line for each. If a change looks wrong, say why and suggest the fix.",
 	}
 	if lens != "" {
@@ -83,17 +91,18 @@ func spawnReview(path string) (string, int, error) {
 	if passes > len(reviewLenses) {
 		passes = len(reviewLenses)
 	}
-	base := "review-" + safeName(filepath.Base(path)) + "-" + reviewStamp(path)
+	nameBase := "review-" + safeName(filepath.Base(path)) + "-" + reviewStamp(path)
+	forkBase := diffBase(path) // review committed work vs the fork point, not just uncommitted
 	var first string
 	var firstErr error
 	for i := 0; i < passes; i++ {
-		name := base
+		name := nameBase
 		lens := ""
 		if passes > 1 {
-			name = base + "-p" + strconv.Itoa(i+1)
+			name = nameBase + "-p" + strconv.Itoa(i+1)
 			lens = reviewLenses[i]
 		}
-		_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: path, Agent: "claude", Prompt: reviewPrompt(lens)})
+		_, _, _, err := spawnAgentSession(spawnReq{Name: name, CWD: path, Agent: "claude", Prompt: reviewPrompt(lens, forkBase)})
 		if i == 0 {
 			first, firstErr = name, err
 		}
@@ -267,12 +276,19 @@ func onSessionFinished(cwd string) {
 					_ = writeReflection(cwd, label, res.Output)
 					prompt := reflectionContext(cwd) +
 						"\nFix the failing build/tests, then re-run the project's checks and stop when they pass."
-					_, _, _, _ = spawnAgentSession(spawnReq{
-						Name:   "reflect-" + safeName(filepath.Base(cwd)) + "-" + reviewStamp(cwd),
+					// Include the attempt label in the session name. Without it the
+					// name is reflect-<base>-<shortHEAD>; a retry that doesn't commit
+					// leaves HEAD unchanged → a duplicate tmux name → the spawn fails
+					// and the self-healing loop dies silently after attempt 1.
+					name := "reflect-" + safeName(filepath.Base(cwd)) + "-" + reviewStamp(cwd) + "-" + label
+					if _, _, _, err := spawnAgentSession(spawnReq{
+						Name:   name,
 						CWD:    cwd,
 						Agent:  "claude",
 						Prompt: prompt,
-					})
+					}); err != nil {
+						log.Printf("reflexion retry %s failed to spawn: %v", label, err)
+					}
 				}
 			}
 		}()

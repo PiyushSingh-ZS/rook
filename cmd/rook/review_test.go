@@ -46,14 +46,20 @@ func TestRunVerify(t *testing.T) {
 }
 
 func TestReviewPromptIsReadOnly(t *testing.T) {
-	p := reviewPrompt("")
+	p := reviewPrompt("", "")
 	for _, must := range []string{"read-only", "git diff", "VERDICT", "DISTILLED"} {
 		if !contains(p, must) {
 			t.Errorf("review prompt missing %q", must)
 		}
 	}
+	// when a fork base is known, the reviewer is told to include committed work
+	// (not just uncommitted) — otherwise it SHIPs on an empty git diff
+	based := reviewPrompt("", "abc123")
+	if !contains(based, "abc123...HEAD") {
+		t.Errorf("based review prompt should diff against the fork base")
+	}
 	// a lens is injected into the prompt when provided (diverse panel)
-	lensed := reviewPrompt(reviewLenses[0])
+	lensed := reviewPrompt(reviewLenses[0], "")
 	if !contains(lensed, reviewLenses[0]) {
 		t.Errorf("lensed review prompt should include the lens text")
 	}
