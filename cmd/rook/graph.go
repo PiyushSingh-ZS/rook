@@ -180,7 +180,7 @@ func scheduleGraph(g *taskGraph) (toLaunch []*graphNode, toAwait []*graphNode) {
 // defaultGraphLaunch spawns an agent for a node in the graph's run dir. The first
 // launched node of a worktree graph creates the worktree; the rest reuse it.
 func defaultGraphLaunch(g *taskGraph, n *graphNode) error {
-	req := spawnReq{Name: n.Session, CWD: g.CWD, Agent: "claude", Prompt: n.Prompt}
+	req := spawnReq{Name: n.Session, CWD: g.CWD, Agent: "claude", Prompt: n.Prompt, Autonomous: true}
 	if g.Worktree && g.RunCWD == "" {
 		req.Worktree = true
 	} else if g.RunCWD != "" {

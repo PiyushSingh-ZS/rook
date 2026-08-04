@@ -57,9 +57,16 @@ func validModel(m string) bool {
 // buildLaunchCmd composes the shell command tmux runs for an agent, layering on
 // --resume (restore a session) and --model (route to a cheaper/stronger model)
 // when requested. Pure + validated so it can be unit-tested without tmux.
-func buildLaunchCmd(agent, resume, model string) (string, error) {
+func buildLaunchCmd(agent, resume, model string, autonomous bool) (string, error) {
 	cmd := agentCmd(agent)
 	launch := cmd
+	// Autonomous orchestration (graph/chain nodes) runs unattended in an isolated
+	// worktree, so it must not freeze at every permission prompt. Bypass them for
+	// claude. rook's destructive-command gate (when hooks are installed) still
+	// fires PreToolUse, so catastrophic commands are still caught.
+	if autonomous && (agent == "" || agent == "claude") {
+		launch += " --dangerously-skip-permissions"
+	}
 	if resume != "" {
 		if !validSessionID(resume) {
 			return "", fmt.Errorf("invalid resume session id")
@@ -89,6 +96,7 @@ type spawnReq struct {
 	Worktree bool   `json:"worktree"` // isolate in a git worktree (don't touch the user's checkout)
 	Resume   string `json:"resume"`   // Claude session id to resume (restores full context; claude only)
 	Model    string `json:"model"`    // override model (haiku|sonnet|opus|claude-* id); "" or "default" = account default
+	Autonomous bool `json:"autonomous"` // run unattended (skip permission prompts) — for graph/chain nodes
 }
 
 // gitToplevel returns the repo root for a directory, or "" if not a git repo.
@@ -162,7 +170,7 @@ func spawnAgentSession(req spawnReq) (string, string, int, error) {
 	// launch layers --resume / --model onto the base agent command (see
 	// buildLaunchCmd). Resume restores a session in place; the initial prompt is
 	// skipped because the conversation is picked up where it left off.
-	launch, lerr := buildLaunchCmd(req.Agent, req.Resume, req.Model)
+	launch, lerr := buildLaunchCmd(req.Agent, req.Resume, req.Model, req.Autonomous)
 	if lerr != nil {
 		return "", "", http.StatusBadRequest, lerr
 	}

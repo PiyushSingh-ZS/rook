@@ -48,7 +48,7 @@ var (
 // dir. The first step of a worktree chain creates the worktree; later steps
 // reuse it (hand-off in place).
 func defaultLaunchStep(c *chain, s *chainStep) error {
-	req := spawnReq{Name: s.Session, CWD: c.CWD, Agent: "claude", Prompt: s.Prompt}
+	req := spawnReq{Name: s.Session, CWD: c.CWD, Agent: "claude", Prompt: s.Prompt, Autonomous: true}
 	// worktree only on the first step; later steps run in the created dir
 	if c.Worktree && c.runCWD == "" {
 		req.Worktree = true

@@ -102,8 +102,10 @@ func TestSendInitialPrompt_WaitsForBoot(t *testing.T) {
 func TestBuildLaunchCmd(t *testing.T) {
 	valid := "cbcd2e95-f25a-4cd5-8baf-b9dae38e8496"
 	cases := []struct {
-		name, agent, resume, model, want string
-		wantErr                          bool
+		name, agent, resume, model string
+		autonomous                 bool
+		want                       string
+		wantErr                    bool
 	}{
 		{name: "plain claude", agent: "claude", want: "claude"},
 		{name: "default agent", agent: "", want: "claude"},
@@ -113,6 +115,8 @@ func TestBuildLaunchCmd(t *testing.T) {
 		{name: "full model id", agent: "claude", model: "claude-haiku-4-5-20251001", want: "claude --model claude-haiku-4-5-20251001"},
 		{name: "resume", agent: "claude", resume: valid, want: "claude --resume " + valid},
 		{name: "resume + model", agent: "claude", resume: valid, model: "sonnet", want: "claude --resume " + valid + " --model sonnet"},
+		{name: "autonomous claude skips permissions", agent: "claude", autonomous: true, want: "claude --dangerously-skip-permissions"},
+		{name: "autonomous is claude-only", agent: "codex", autonomous: true, want: "codex"},
 		{name: "bad model", agent: "claude", model: "gpt-4; rm -rf", wantErr: true},
 		{name: "bad resume id", agent: "claude", resume: "not a uuid!", wantErr: true},
 		{name: "resume non-claude", agent: "codex", resume: valid, wantErr: true},
@@ -120,7 +124,7 @@ func TestBuildLaunchCmd(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildLaunchCmd(tc.agent, tc.resume, tc.model)
+			got, err := buildLaunchCmd(tc.agent, tc.resume, tc.model, tc.autonomous)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %q", got)
