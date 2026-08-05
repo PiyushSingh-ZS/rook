@@ -181,32 +181,44 @@ func TestGraphDependsOnNormalization(t *testing.T) {
 func TestNodeAgentFinished(t *testing.T) {
 	old := int64(10000)  // StartedAt well past the 6s debounce vs now
 	now := int64(20000)
-	run := func(status string, present bool, startedAt int64) bool {
+	run := func(status string, present bool, startedAt int64, everBusy bool) bool {
 		m := map[string]string{}
 		if present {
 			m["g1-plan"] = status
 		}
 		n := &graphNode{Type: "agent", Status: "running", Session: "g1-plan", StartedAt: startedAt}
-		return nodeAgentFinished(n, now, m)
+		return nodeAgentFinished(n, now, m, everBusy)
 	}
-	if !run("idle", true, old) {
-		t.Error("idle session past debounce should finish the node")
+	if !run("idle", true, old, true) {
+		t.Error("idle after working should finish the node")
 	}
-	if !run("", false, old) {
-		t.Error("a vanished session should finish the node")
+	if !run("", false, old, true) {
+		t.Error("a vanished session that had worked should finish the node")
 	}
-	if run("busy", true, old) {
+	if run("busy", true, old, true) {
 		t.Error("a busy session is not finished")
 	}
-	if run("waiting", true, old) {
+	if run("waiting", true, old, true) {
 		t.Error("a session waiting on a permission prompt is not finished")
 	}
-	if run("idle", true, 19000) { // now-StartedAt = 1s < 6s debounce
+	if run("idle", true, 19000, true) { // now-StartedAt = 1s < 6s debounce
 		t.Error("within the startup debounce, don't complete")
+	}
+	// boot-window guard: idle but never seen working AND not yet past the 25s
+	// fallback → still booting, must NOT complete
+	if run("idle", true, old, false) { // now-old = 10s
+		t.Error("idle but never seen working (still booting) must NOT complete")
+	}
+	if run("", false, old, false) {
+		t.Error("absent and never seen working (failed/slow boot) must NOT complete")
+	}
+	// but a fast task the poller never caught as busy still completes after 25s idle
+	if !run("idle", true, int64(-10000), false) { // now-startedAt = 30s
+		t.Error("idle for >25s should complete even if 'busy' was never observed")
 	}
 	// a non-running node never completes
 	nd := &graphNode{Type: "agent", Status: "done", Session: "g1-plan", StartedAt: old}
-	if nodeAgentFinished(nd, now, map[string]string{"g1-plan": "idle"}) {
+	if nodeAgentFinished(nd, now, map[string]string{"g1-plan": "idle"}, true) {
 		t.Error("a non-running node must not be completed")
 	}
 }

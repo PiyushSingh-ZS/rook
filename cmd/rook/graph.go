@@ -49,7 +49,8 @@ type graphNode struct {
 	DependsOn []graphDep `json:"dependsOn"`
 	Status    string     `json:"status"`
 	Result    string     `json:"result"`
-	Session   string     `json:"session"`
+	Session   string     `json:"session"`   // tmux session name
+	SessionID string     `json:"sessionId"` // Claude session UUID, for drill-in to the Operator view
 	StartedAt int64      `json:"startedAt"`
 }
 
@@ -292,11 +293,18 @@ func startGraphPoller(interval time.Duration) {
 	}()
 }
 
-// nodeAgentFinished decides whether a running agent node's turn is over: its own
-// session went idle or vanished, past the startup debounce. Keyed on the node's
-// unique session — never the directory — so sibling graphs can't cross-complete.
-// A "waiting" session (permission prompt) is NOT finished.
-func nodeAgentFinished(n *graphNode, now int64, statusByName map[string]string) bool {
+// graphNodeBusy remembers which nodes were ever observed actually working, so a
+// node isn't completed during its agent's boot window (a fresh claude sits
+// "idle" at its prompt before the task even starts). Guarded by graphMu.
+var graphNodeBusy = map[string]bool{}
+
+func busyKey(gID, nID string) string { return gID + "|" + nID }
+
+// nodeAgentFinished decides whether a running agent node's turn is over. Keyed on
+// the node's unique session (never the directory, so sibling graphs can't
+// cross-complete) AND requires it was seen working first — a not-yet-scanned
+// booting agent, or one idling at its prompt before it began, is NOT finished.
+func nodeAgentFinished(n *graphNode, now int64, statusByName map[string]string, everBusy bool) bool {
 	if n.Type != "agent" || n.Status != "running" || n.Session == "" {
 		return false
 	}
@@ -304,12 +312,23 @@ func nodeAgentFinished(n *graphNode, now int64, statusByName map[string]string) 
 		return false
 	}
 	st, present := statusByName[n.Session]
-	return !present || st == "idle"
+	if present {
+		if st != "idle" {
+			return false // busy / waiting / shell — still going
+		}
+		// idle: done if we saw it work, or it's idled long enough that even a
+		// task too fast for the poller to catch as "busy" has certainly finished.
+		return everBusy || now-n.StartedAt > 25000
+	}
+	// session gone: only "finished" if we saw it work; otherwise it likely failed
+	// to boot — leave it running rather than falsely completing it.
+	return everBusy
 }
 
 func advanceGraphsBySession() {
-	// map each live agent's tmux session NAME -> its status
+	// map each live agent's tmux session NAME -> its status and Claude session id
 	statusByName := map[string]string{}
+	idByName := map[string]string{}
 	paneSess := tmuxPaneSessions() // pane id -> session name
 	for _, s := range ScanSessions(1) {
 		if !s.Alive || s.TmuxPane == "" {
@@ -317,6 +336,7 @@ func advanceGraphsBySession() {
 		}
 		if name := paneSess[s.TmuxPane]; name != "" {
 			statusByName[name] = s.Status
+			idByName[name] = s.SessionID
 		}
 	}
 	now := time.Now().UnixMilli()
@@ -330,7 +350,17 @@ func advanceGraphsBySession() {
 			continue
 		}
 		for _, n := range g.Nodes {
-			if nodeAgentFinished(n, now, statusByName) {
+			// record the node's Claude session id (for drill-in) while it's live
+			if n.SessionID == "" && n.Session != "" {
+				if id := idByName[n.Session]; id != "" {
+					n.SessionID = id
+				}
+			}
+			// mark it as having worked once its session is seen busy
+			if st := statusByName[n.Session]; st == "busy" || st == "shell" {
+				graphNodeBusy[busyKey(g.ID, n.ID)] = true
+			}
+			if nodeAgentFinished(n, now, statusByName, graphNodeBusy[busyKey(g.ID, n.ID)]) {
 				pairs = append(pairs, struct {
 					g *taskGraph
 					n *graphNode

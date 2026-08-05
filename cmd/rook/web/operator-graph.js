@@ -81,9 +81,11 @@
         ? '<div class="op-g-appr"><button class="btn xs" data-appr="1" data-g="' + g.id + '" data-n="' + esc(n.id) + '">Approve</button><button class="btn xs danger" data-appr="0" data-g="' + g.id + '" data-n="' + esc(n.id) + '">Reject</button></div>'
         : "";
       var tag = n.type === "approval" ? '<span class="op-g-tag">approval</span>' : (n.verify ? '<span class="op-g-tag">verify</span>' : "");
+      // agent nodes with a resolved session drill into the Operator view (transcript / diff / terminal)
+      var view = (n.type === "agent" && n.sessionId) ? '<button class="op-g-view" data-sid="' + esc(n.sessionId) + '" title="Open this agent — transcript, diff, terminal">View →</button>' : "";
       return '<div class="op-g-node ' + statusClass(n) + '" style="left:' + p.x + 'px;top:' + p.y + 'px;width:' + NW + 'px">' +
         '<div class="op-g-node-top"><span class="op-g-name">' + esc(n.name || n.id) + "</span>" + tag + "</div>" +
-        '<div class="op-g-node-meta"><span class="op-g-st ' + statusClass(n) + '">' + statusLabel(n) + "</span></div>" +
+        '<div class="op-g-node-meta"><span class="op-g-st ' + statusClass(n) + '">' + statusLabel(n) + "</span>" + view + "</div>" +
         appr + "</div>";
     }).join("");
 
@@ -136,6 +138,7 @@
       '<div class="op-g-body">' + body + "</div>";
 
     host.querySelectorAll(".op-g-tab").forEach(function (b) { b.addEventListener("click", function () { openId = b.dataset.gid; lastSig = ""; paint(); }); });
+    host.querySelectorAll(".op-g-view").forEach(function (b) { b.addEventListener("click", function (e) { e.stopPropagation(); ctxRef.selectAgent && ctxRef.selectAgent(b.dataset.sid); }); });
     host.querySelectorAll("[data-appr]").forEach(function (b) {
       b.addEventListener("click", function () {
         fetch("/api/graph/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.g, node: b.dataset.n, approved: b.dataset.appr === "1" }) })
@@ -200,7 +203,9 @@
       ".op-g-node-top { display:flex; align-items:center; gap:6px; }" +
       ".op-g-name { font-size:12.5px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }" +
       ".op-g-tag { font-size:9px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-4); border:1px solid var(--line); border-radius:4px; padding:1px 4px; margin-left:auto; }" +
-      ".op-g-node-meta { margin-top:3px; }" +
+      ".op-g-node-meta { margin-top:3px; display:flex; align-items:center; gap:8px; }" +
+      ".op-g-view { margin-left:auto; background:none; border:none; color:var(--accent); font-size:11px; cursor:pointer; padding:0; font-family:var(--mono); }" +
+      ".op-g-view:hover { text-decoration:underline; }" +
       ".op-g-st { font-size:10px; text-transform:uppercase; letter-spacing:.04em; }" +
       ".op-g-st.run { color:var(--busy); } .op-g-st.await { color:var(--coral); } .op-g-st.pass { color:var(--ok); } .op-g-st.fail { color:var(--danger); } .op-g-st.skip,.op-g-st.pend { color:var(--ink-4); }" +
       ".op-g-appr { display:flex; gap:6px; margin-top:7px; }";
