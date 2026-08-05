@@ -258,7 +258,7 @@ func sendInitialPrompt(target, prompt string) {
 // deliberately NOT here: it is also the selection cursor of the first-run trust
 // dialog ("❯ 1. Yes, I trust this folder"), so treating it as "ready" made us
 // type the prompt into the trust menu, where it was discarded.
-var promptReadyMarkers = []string{"for shortcuts", "esc to interrupt", "manual mode", "accept edits"}
+var promptReadyMarkers = []string{"for shortcuts", "esc to interrupt", "manual mode", "accept edits", "bypass permissions on", "shift+tab to cycle"}
 
 // trustDialogMarkers identify Claude Code's first-run directory-trust prompt.
 var trustDialogMarkers = []string{"trust this folder", "trust the files", "Yes, I trust"}
@@ -266,6 +266,20 @@ var trustDialogMarkers = []string{"trust this folder", "trust the files", "Yes, 
 // paneHasTrustDialog reports whether the captured pane is showing the trust prompt.
 func paneHasTrustDialog(capture string) bool {
 	for _, m := range trustDialogMarkers {
+		if strings.Contains(capture, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// bypassDialogMarkers identify the "Bypass Permissions mode" confirmation shown on
+// the first autonomous (--dangerously-skip-permissions) launch.
+var bypassDialogMarkers = []string{"Bypass Permissions mode", "accept all responsibility"}
+
+// paneHasBypassWarning reports whether the pane is showing the bypass-mode warning.
+func paneHasBypassWarning(capture string) bool {
+	for _, m := range bypassDialogMarkers {
 		if strings.Contains(capture, m) {
 			return true
 		}
@@ -298,7 +312,7 @@ func paneHasPrompt(capture, prompt string) bool {
 // trust this folder" (its default selection), so the real prompt can land after.
 func waitForPromptReady(target string, max time.Duration) {
 	deadline := time.Now().Add(max)
-	trustCleared := false
+	trustCleared, bypassCleared := false, false
 	for time.Now().Before(deadline) {
 		time.Sleep(600 * time.Millisecond)
 		out, err := runTmux("capture-pane", "-p", "-t", target)
@@ -306,6 +320,16 @@ func waitForPromptReady(target string, max time.Duration) {
 			continue
 		}
 		capture := string(out)
+		if !bypassCleared && paneHasBypassWarning(capture) {
+			// the default option is "No, exit" — accepting on Enter would kill the
+			// session. Move down to "Yes, I accept" and confirm.
+			_ = tmuxSendKeys(target, false, "Down")
+			time.Sleep(150 * time.Millisecond)
+			_ = tmuxSendKeys(target, false, "Enter")
+			bypassCleared = true
+			time.Sleep(900 * time.Millisecond)
+			continue
+		}
 		if !trustCleared && paneHasTrustDialog(capture) {
 			// "Yes, I trust this folder" is the default highlighted option;
 			// Enter confirms it. Then keep polling for the actual REPL.

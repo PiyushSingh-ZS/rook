@@ -93,3 +93,17 @@ func TestSendInitialPrompt_Live(t *testing.T) {
 		t.Fatalf("prompt did not land in a fresh dir:\n%s", pane)
 	}
 }
+
+func TestPaneHasBypassWarning(t *testing.T) {
+	warn := " WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept"
+	if !paneHasBypassWarning(warn) {
+		t.Fatal("bypass-permissions warning should be detected")
+	}
+	if paneHasBypassWarning("❯ Try \"fix errors\"\n manual mode on") {
+		t.Fatal("a normal REPL is not the bypass warning")
+	}
+	// the bypass-mode REPL status line reads as ready (so the prompt lands fast)
+	if !paneReady("⏵⏵ bypass permissions on (shift+tab to cycle) · 1 agent") {
+		t.Fatal("bypass-mode status line should count as a ready REPL")
+	}
+}
