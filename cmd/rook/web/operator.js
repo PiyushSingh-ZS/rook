@@ -1310,39 +1310,69 @@
       });
   }
   // Build a task GRAPH (DAG) — nodes with conditional edges + approval gates.
-  // One node per line: name | type | dependsOn | prompt
-  //   type       = agent (default) or approval
-  //   dependsOn  = comma-sep "node:on"  (on = pass | fail | done; default pass)
-  function parseGraphNodes(text) {
-    var nodes = [];
-    text.split("\n").forEach(function (line) {
-      var l = line.trim(); if (!l) return;
-      var parts = l.split("|").map(function (x) { return x.trim(); });
-      var name = parts[0]; if (!name) return;
-      var type = (parts[1] || "agent").toLowerCase() === "approval" ? "approval" : "agent";
-      var deps = (parts[2] || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean).map(function (d) {
-        var kv = d.split(":"); return { node: kv[0].trim(), on: (kv[1] || "pass").trim() };
-      });
-      var verify = false, prompt = parts.slice(3).join("|").trim();
-      if (/^verify\b/i.test(prompt)) { verify = true; prompt = prompt.replace(/^verify\s*/i, ""); }
-      nodes.push({ id: name, name: name, type: type, verify: verify, dependsOn: deps, prompt: prompt });
-    });
-    return nodes;
-  }
+  // The structured builder lives in newGraph().
   function newGraph() {
+    // structured node builder — real fields per node instead of pipe syntax
+    var gnodes = [
+      { name: "plan", type: "agent", verify: false, prompt: "draft a plan", deps: [] },
+      { name: "approve", type: "approval", verify: false, prompt: "", deps: [{ node: "plan", on: "pass" }] },
+      { name: "build", type: "agent", verify: false, prompt: "implement the plan", deps: [{ node: "approve", on: "pass" }] },
+    ];
+    var ON = ["pass", "fail", "done"];
+    function opts(list, sel) { return list.map(function (o) { return '<option' + (o === sel ? " selected" : "") + ">" + esc(o) + "</option>"; }).join(""); }
+    function nodeHTML(n, i) {
+      var others = gnodes.filter(function (x, j) { return j !== i && x.name; });
+      var chips = n.deps.map(function (d, di) {
+        return '<span class="gb-dep"><b>' + esc(d.node) + '</b><select class="gb-depon" data-i="' + i + '" data-di="' + di + '">' + opts(ON, d.on) + '</select>' +
+          '<button class="gb-depx" data-i="' + i + '" data-di="' + di + '" title="remove">×</button></span>';
+      }).join("");
+      var addDep = others.length ? '<select class="gb-addep" data-i="' + i + '"><option value="">+ depends on…</option>' +
+        others.map(function (o) { return '<option value="' + esc(o.name) + '">' + esc(o.name) + "</option>"; }).join("") + "</select>" : "";
+      return '<div class="gb-node">' +
+        '<div class="gb-node-top">' +
+          '<input class="gb-name" data-i="' + i + '" placeholder="node name" value="' + esc(n.name) + '" />' +
+          '<select class="gb-type" data-i="' + i + '"><option value="agent"' + (n.type === "agent" ? " selected" : "") + '>agent</option><option value="approval"' + (n.type === "approval" ? " selected" : "") + '>approval — you approve</option></select>' +
+          (n.type === "agent" ? '<label class="gb-verify" title="gate the next step on build/tests passing"><input type="checkbox" class="gb-vchk" data-i="' + i + '"' + (n.verify ? " checked" : "") + "/> verify</label>" : "") +
+          (gnodes.length > 1 ? '<button class="gb-rm" data-i="' + i + '" title="remove node">' + I.x + "</button>" : "") +
+        "</div>" +
+        (n.type === "agent" ? '<textarea class="gb-prompt" data-i="' + i + '" rows="2" placeholder="what should this agent do?">' + esc(n.prompt) + "</textarea>" : "") +
+        '<div class="gb-deps">' + (chips || addDep ? '<span class="gb-deps-lbl">runs after</span>' : "") + chips + addDep + "</div>" +
+      "</div>";
+    }
+    function renderNodes() {
+      var c = $("gb_nodes"); if (!c) return;
+      c.innerHTML = gnodes.map(nodeHTML).join("") + '<button class="btn sm gb-add" id="gb_add">' + I.plus + "Add node</button>";
+      wireNodes();
+    }
+    function wireNodes() {
+      var c = $("gb_nodes"); if (!c) return;
+      c.querySelectorAll(".gb-name").forEach(function (el) { el.addEventListener("input", function () { gnodes[+el.dataset.i].name = el.value; }); });
+      c.querySelectorAll(".gb-prompt").forEach(function (el) { el.addEventListener("input", function () { gnodes[+el.dataset.i].prompt = el.value; }); });
+      c.querySelectorAll(".gb-vchk").forEach(function (el) { el.addEventListener("change", function () { gnodes[+el.dataset.i].verify = el.checked; }); });
+      c.querySelectorAll(".gb-type").forEach(function (el) { el.addEventListener("change", function () { gnodes[+el.dataset.i].type = el.value; renderNodes(); }); });
+      c.querySelectorAll(".gb-depon").forEach(function (el) { el.addEventListener("change", function () { gnodes[+el.dataset.i].deps[+el.dataset.di].on = el.value; }); });
+      c.querySelectorAll(".gb-depx").forEach(function (el) { el.addEventListener("click", function () { gnodes[+el.dataset.i].deps.splice(+el.dataset.di, 1); renderNodes(); }); });
+      c.querySelectorAll(".gb-addep").forEach(function (el) { el.addEventListener("change", function () { if (el.value) { gnodes[+el.dataset.i].deps.push({ node: el.value, on: "pass" }); renderNodes(); } }); });
+      c.querySelectorAll(".gb-rm").forEach(function (el) { el.addEventListener("click", function () { gnodes.splice(+el.dataset.i, 1); renderNodes(); }); });
+      var add = $("gb_add"); if (add) add.addEventListener("click", function () { gnodes.push({ name: "", type: "agent", verify: false, prompt: "", deps: [] }); renderNodes(); });
+    }
     modal("New task graph",
       '<label class="set-field"><span class="set-k">Graph title</span><input class="set-in" id="gr_title" placeholder="ship feature X safely" /></label>' +
       '<label class="set-field"><span class="set-k">Working directory</span>' + repoField("gr_cwd", "search your repos by name…", "") + "</label>" +
-      '<label class="set-field"><span class="set-k">Nodes — one per line: <code>name | type | dependsOn | prompt</code></span><textarea class="set-in" id="gr_nodes" rows="7" spellcheck="false" placeholder="plan | agent |  | draft a plan for X&#10;approve | approval | plan:pass |&#10;build | agent | approve:pass | implement the plan&#10;test | agent | build:pass | verify run tests and fix failures&#10;rollback | agent | test:fail | revert the change and explain why"></textarea></label>' +
-      '<div class="set-hint" style="margin:-6px 0 8px">type = <b>agent</b> or <b>approval</b>; dependsOn = <b>node:on</b> (on = pass·fail·done); prefix a prompt with <b>verify</b> to gate on the build/test result.</div>' +
-      '<label class="set-toggle"><input type="checkbox" id="gr_wt" checked /><span><b>Isolate in a git worktree</b></span></label>' +
+      '<div class="set-field"><span class="set-k">Nodes</span><div class="gb-nodes" id="gb_nodes"></div></div>' +
+      '<div class="set-hint" style="margin:2px 0 8px"><b>agent</b> runs an AI task · <b>approval</b> waits for you · <b>verify</b> gates on build/tests · <b>runs after</b> sets dependencies with a pass/fail/done condition.</div>' +
+      '<label class="set-toggle"><input type="checkbox" id="gr_wt" checked /><span><b>Isolate in a git worktree</b><span class="set-hint">agents change files only in the worktree, never your checkout</span></span></label>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn primary" id="gr_go">' + I.plus + "Create graph</button></div>",
       function (ov, close) {
         wireRepoPicker("gr_cwd");
+        renderNodes();
         setTimeout(function () { $("gr_cwd").focus(); }, 30);
         $("gr_go").addEventListener("click", async function () {
-          var cwd = $("gr_cwd").value.trim(), nodes = parseGraphNodes($("gr_nodes").value);
-          if (!cwd || !nodes.length) { toast("cwd and at least one node required", "err"); return; }
+          var cwd = $("gr_cwd").value.trim();
+          var nodes = gnodes.filter(function (n) { return n.name.trim(); }).map(function (n) {
+            return { id: n.name.trim(), name: n.name.trim(), type: n.type, verify: !!n.verify, prompt: (n.prompt || "").trim(), dependsOn: n.deps.map(function (d) { return { node: d.node, on: d.on }; }) };
+          });
+          if (!cwd || !nodes.length) { toast("Working directory and at least one node required", "err"); return; }
           try {
             var r = await fetch("/api/graph", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("gr_title").value, cwd: cwd, worktree: $("gr_wt").checked, nodes: nodes }) });
             var d = await r.json(); if (d && d.data) d = d.data;

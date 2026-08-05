@@ -588,6 +588,24 @@ select.set-in { cursor: pointer; }
 .ov-health .ovh-ic svg { width:16px; height:16px; }
 .ov-health .ovh-txt { flex:1; color:var(--ink); }
 .ov-health .btn { margin-left:auto; }
+/* task-graph node builder */
+.gb-nodes { display:flex; flex-direction:column; gap:8px; }
+.gb-node { border:1px solid var(--line); border-radius:9px; padding:9px 10px; background:var(--panel-2); display:flex; flex-direction:column; gap:7px; }
+.gb-node-top { display:flex; align-items:center; gap:7px; }
+.gb-name { flex:1; min-width:0; background:var(--panel); border:1px solid var(--line-2); border-radius:6px; padding:5px 8px; color:var(--ink); font-family:var(--mono); font-size:12.5px; }
+.gb-type { background:var(--panel); border:1px solid var(--line-2); border-radius:6px; padding:5px 6px; color:var(--ink-2); font-size:12px; }
+.gb-verify { display:inline-flex; align-items:center; gap:4px; font-size:11.5px; color:var(--ink-2); white-space:nowrap; font-family:var(--mono); }
+.gb-rm { background:none; border:none; color:var(--ink-3); cursor:pointer; padding:2px; display:inline-flex; }
+.gb-rm svg { width:15px; height:15px; } .gb-rm:hover { color:var(--danger); }
+.gb-prompt { width:100%; background:var(--panel); border:1px solid var(--line-2); border-radius:6px; padding:6px 8px; color:var(--ink); font-size:12.5px; resize:vertical; font-family:inherit; }
+.gb-deps { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.gb-deps-lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-3); font-family:var(--mono); }
+.gb-dep { display:inline-flex; align-items:center; gap:4px; background:var(--panel); border:1px solid var(--line-2); border-radius:5px; padding:1px 3px 1px 7px; font-size:11.5px; }
+.gb-dep b { color:var(--accent); font-weight:600; font-family:var(--mono); }
+.gb-depon { background:transparent; border:none; color:var(--ink-2); font-size:11px; }
+.gb-depx { background:none; border:none; color:var(--ink-3); cursor:pointer; font-size:13px; padding:0 2px; } .gb-depx:hover { color:var(--danger); }
+.gb-addep { background:var(--panel); border:1px dashed var(--line-2); border-radius:5px; padding:2px 6px; color:var(--ink-3); font-size:11.5px; cursor:pointer; }
+.gb-add { align-self:flex-start; }
 
 /* quality badge click affordance + breakdown modal */
 .q-badge.q-click { cursor: pointer; }
