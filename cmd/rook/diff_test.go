@@ -95,3 +95,22 @@ func TestComputeDiff_rejectsNonRepo(t *testing.T) {
 		t.Fatal("expected error for non-git directory, got nil")
 	}
 }
+
+// TestPRNumGuard pins that only a bare number reaches the gh command line, so a
+// crafted ?pr= value can't inject into `gh pr diff`.
+func TestPRNumGuard(t *testing.T) {
+	for _, ok := range []string{"1", "2569", "100000"} {
+		if !prNumRe.MatchString(ok) {
+			t.Errorf("%q should be accepted as a PR number", ok)
+		}
+	}
+	for _, bad := range []string{"", "2569;rm -rf", "2569 ", "abc", "-5", "2569&&x", "$(id)"} {
+		if prNumRe.MatchString(bad) {
+			t.Errorf("%q must be rejected as a PR number", bad)
+		}
+	}
+	// prDiffByNumber refuses a bad number outright (no gh call)
+	if _, ok := prDiffByNumber("/tmp", "2569;rm -rf"); ok {
+		t.Error("prDiffByNumber must reject a non-numeric pr")
+	}
+}

@@ -200,6 +200,19 @@ func prDiff(dir string) (diffResult, bool) {
 	if err != nil || num == "" {
 		return diffResult{}, false
 	}
+	return prDiffByNumber(dir, num)
+}
+
+// prNumRe guards the PR number before it reaches the gh command line.
+var prNumRe = regexp.MustCompile(`^[0-9]+$`)
+
+// prDiffByNumber serves the canonical `gh pr diff <num>` — used when the caller
+// already knows the PR number (a review agent), so the diff is correct even
+// before the worktree has checked the PR branch out.
+func prDiffByNumber(dir, num string) (diffResult, bool) {
+	if ghBin == "" || !prNumRe.MatchString(num) {
+		return diffResult{}, false
+	}
 	patch, err := ghDirOut(dir, "pr", "diff", num)
 	if err != nil {
 		return diffResult{}, false
@@ -390,6 +403,14 @@ func handleDiff(ctx *gofr.Context) (any, error) {
 	fi, err := os.Stat(p)
 	if err != nil || !fi.IsDir() {
 		return nil, errf(http.StatusBadRequest, "path is not a directory")
+	}
+	// A review agent passes the PR number it is reviewing, so we serve the
+	// canonical PR diff by number — independent of whether the worktree has
+	// checked the PR branch out yet (which is what made it show the local diff).
+	if pr := ctx.Param("pr"); prNumRe.MatchString(pr) {
+		if d, ok := prDiffByNumber(p, pr); ok {
+			return rawJSON(d)
+		}
 	}
 	res, err := cachedDiff(p)
 	if err != nil {

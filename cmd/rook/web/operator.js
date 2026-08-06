@@ -819,11 +819,14 @@
   async function loadDiff() {
     var p = $("wsDiff"); if (!p) return;
     var s = findAgent(selectedId); if (!s || !s.cwd) { p.innerHTML = '<div class="op-empty">' + I.diff + '<div class="t">No working directory</div></div>'; return; }
-    if (ws.diffLoaded && p.dataset.for === selectedId) return;
     ws.diffLoaded = true; p.dataset.for = selectedId;
     p.innerHTML = '<div class="ws-diff-mount"><div class="op-empty">Loading diff…</div></div>';
     try {
-      var d = await (await fetch("/api/diff?path=" + encodeURIComponent(s.cwd), { cache: "no-store" })).json();
+      // for a PR-review agent, ask for that PR's diff by number so it's correct
+      // even before the worktree has checked the PR branch out
+      var url = "/api/diff?path=" + encodeURIComponent(s.cwd);
+      if (ws.ghRef && ws.ghRef.kind === "pr" && ws.ghRef.number) url += "&pr=" + encodeURIComponent(ws.ghRef.number);
+      var d = await (await fetch(url, { cache: "no-store" })).json();
       if (d.data) d = d.data;
       p.innerHTML = "";
       var threads = el("div", "ws-threads"); threads.id = "wsThreads"; p.appendChild(threads);
