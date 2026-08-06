@@ -97,6 +97,10 @@
       "</tr>";
     }).join("");
     var allChecked = list.length && list.every(function (s) { return sel[s.pid]; });
+    // preserve scroll across the 2s repaint — rebuilding innerHTML otherwise
+    // collapses the scroll container and snaps you back to the top
+    var prevWrap = host.querySelector(".dev-tablewrap");
+    var savedTop = prevWrap ? prevWrap.scrollTop : 0;
     host.innerHTML =
       '<div class="dev-head"><div class="ov-sec-label" style="margin:0">Dev servers · ' + list.length + "</div>" +
         '<div class="dev-bulk">' + (selCount ? '<span class="cnt">' + selCount + " selected</span>" + '<button class="btn sm danger" id="dev-stopsel">' + c.icon.stop + "Stop selected</button>" : "") + "</div>" +
@@ -106,6 +110,8 @@
           "<th>Name</th><th>Port</th><th>PID</th><th>Command</th><th>Runtime</th><th>Address</th><th>Directory</th><th></th></tr></thead>" +
         "<tbody>" + rows + "</tbody>" +
       "</table></div>";
+    var newWrap = host.querySelector(".dev-tablewrap");
+    if (newWrap && savedTop) newWrap.scrollTop = savedTop;
 
     var all = host.querySelector("#dev-all");
     if (all) all.addEventListener("change", function () { list.forEach(function (s) { sel[s.pid] = all.checked; }); paint(lastState); });
