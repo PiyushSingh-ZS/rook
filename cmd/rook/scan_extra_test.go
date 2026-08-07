@@ -107,3 +107,26 @@ func TestTokenWindows_Shape(t *testing.T) {
 		}
 	}
 }
+
+// TestEffectiveStatus pins that a "busy" session silent past staleBusyMs reads as
+// idle (not Busy/Working) while a recently-active busy session stays busy.
+func TestEffectiveStatus(t *testing.T) {
+	now := int64(1_000_000_000_000)
+	fresh := now - 60_000            // 1 min ago
+	stale := now - staleBusyMs - 1000 // just past 30 min
+	if effectiveStatus("busy", fresh, now) != "busy" {
+		t.Error("a recently-active busy session should stay busy")
+	}
+	if effectiveStatus("busy", stale, now) != "idle" {
+		t.Error("a busy session silent past staleBusyMs should downgrade to idle")
+	}
+	if effectiveStatus("shell", stale, now) != "idle" {
+		t.Error("a stale shell session should downgrade to idle")
+	}
+	if effectiveStatus("waiting", stale, now) != "waiting" {
+		t.Error("waiting is not downgraded — a human is the blocker, not the agent")
+	}
+	if effectiveStatus("busy", 0, now) != "busy" {
+		t.Error("no timestamp → don't downgrade")
+	}
+}

@@ -726,6 +726,20 @@ func lastPromptText(raw json.RawMessage) string {
 	return ""
 }
 
+// staleBusyMs: a session claiming "busy"/"shell" but silent this long is not
+// actually working — no real agent turn stays silent for 30 minutes, so it's a
+// hung/stale session or a reused PID after the real agent exited.
+const staleBusyMs = 30 * 60 * 1000
+
+// effectiveStatus downgrades a stale "busy"/"shell" to "idle" so a long-dead
+// session doesn't keep reading as Busy / Working.
+func effectiveStatus(status string, updatedAt, now int64) string {
+	if (status == "busy" || status == "shell") && updatedAt > 0 && now-updatedAt > staleBusyMs {
+		return "idle"
+	}
+	return status
+}
+
 func parseTS(s string) int64 {
 	if s == "" {
 		return 0
@@ -821,6 +835,10 @@ func ScanSessions(maxTools int) []Session {
 			s.Status = "dead"
 		}
 		if alive {
+			// A session file can say "busy" long after its agent actually exited —
+			// the PID gets reused, so pidAlive is true, but there's been no update
+			// in days. Don't badge that as Busy / Working.
+			s.Status = effectiveStatus(s.Status, sf.UpdatedAt, time.Now().UnixMilli())
 			s.TmuxPane = findPaneForPID(sf.PID, panes)
 			s.Controllable = s.TmuxPane != ""
 		}
